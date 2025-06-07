@@ -77,22 +77,29 @@ public:
                             }
                             break;
 
-                        case STATE_ALPHA_RESTING:
-                            // Stay put and count down resting time
-                            creature->newX = creature->posX;
-                            creature->newY = creature->posY;
-                            creature->alphaRestingTime--;
+                    case STATE_ALPHA_RESTING:
+                        // Stay put and count down resting time
+                        creature->newX = creature->posX;
+                        creature->newY = creature->posY;
+                        creature->alphaRestingTime--;
 
-                            if (creature->alphaRestingTime <= 0) {
-                                // Pick new random destination within reasonable range
-                                qreal wanderDistance = MainWindow::ALPHA_MIN_WANDER_DIST +
-                                    QRandomGenerator::global()->bounded(MainWindow::ALPHA_MAX_WANDER_DIST - MainWindow::ALPHA_MIN_WANDER_DIST);
-                                qreal angle = QRandomGenerator::global()->bounded(360) * M_PI / 180.0; // Random angle in radians
-                                creature->alphaTargetX = creature->posX + cos(angle) * wanderDistance;
-                                creature->alphaTargetY = creature->posY + sin(angle) * wanderDistance;
-                                creature->state = STATE_ALPHA_TRAVELING;
-                            }
-                            break;
+                        if (creature->alphaRestingTime <= 0) {
+                            // Pick small random offset from current position for normal wandering
+                            qreal offsetX = QRandomGenerator::global()->bounded(MainWindow::ALPHA_NORMAL_WANDER_DISTANCE * 2 + 1) - MainWindow::ALPHA_NORMAL_WANDER_DISTANCE;
+                            qreal offsetY = QRandomGenerator::global()->bounded(MainWindow::ALPHA_NORMAL_WANDER_DISTANCE * 2 + 1) - MainWindow::ALPHA_NORMAL_WANDER_DISTANCE;
+
+                            qreal targetX = creature->posX + offsetX;
+                            qreal targetY = creature->posY + offsetY;
+
+                            // Keep target within world bounds
+                            targetX = qMax(0.0, qMin(static_cast<qreal>(MainWindow::WORLD_SCENE_WIDTH), targetX));
+                            targetY = qMax(0.0, qMin(static_cast<qreal>(MainWindow::WORLD_SCENE_HEIGHT), targetY));
+
+                            creature->alphaTargetX = targetX;
+                            creature->alphaTargetY = targetY;
+                            creature->state = STATE_ALPHA_TRAVELING;
+                        }
+                        break;
 
                         default:
                             // Default alpha state - pick initial destination
@@ -103,76 +110,17 @@ public:
                     }
                 } else {
                     // === HERD MEMBER BEHAVIOR ===
+                    // Simple behavior: Rest -> Pick position around alpha -> Move to position -> Rest
                     switch (creature->state) {
                         case STATE_SEEKING_HERD:
-                            // Look for another creature in same herd to follow (will be handled in main thread)
-                            break;
-
                         case STATE_MOVING_TO_HERD:
-                            if (creature->herdTarget) {
-                                // Calculate direction to herd target
-                                qreal dx = creature->herdTarget->posX - creature->posX;
-                                qreal dy = creature->herdTarget->posY - creature->posY;
-                                qreal distance = sqrt(dx * dx + dy * dy);
-
-                                if (distance > creature->elbowRoomRange) {
-                                    // Move toward herd target, but only if we're not close enough
-                                    qreal moveX = (dx / distance) * creature->speed;
-                                    qreal moveY = (dy / distance) * creature->speed;
-                                    creature->newX = creature->posX + moveX;
-                                    creature->newY = creature->posY + moveY;
-                                } else {
-                                    // We're close enough - check for collisions and find proper spacing
-                                    creature->state = STATE_FINDING_SPACE;
-                                }
-                            } else {
-                                creature->state = STATE_SEEKING_HERD;
-                            }
-                            break;
-
                         case STATE_FINDING_SPACE:
-                            // Check for collisions with other creatures IN SAME HERD and move away from them
-                            {
-                                qreal avoidX = 0;
-                                qreal avoidY = 0;
-                                bool foundCollision = false;
-                                int collisionCount = 0;
-
-                                // Check against creatures in SAME HERD only (not all creatures)
-                                for (int j = 0; j < mCreatures->size(); j++) {
-                                    SimpleCreature* other = (*mCreatures)[j];
-                                    if (other && other != creature && other->exists && other->myAlpha == creature->myAlpha) {
-                                        qreal dx = other->posX - creature->posX;
-                                        qreal dy = other->posY - creature->posY;
-                                        qreal distance = sqrt(dx * dx + dy * dy);
-
-                                        // Use dynamic elbow room: creature diameter + random factor
-                                        qreal minDistance = creature->size + (creature->size * creature->elbowRoomRange);
-
-                                        if (distance < minDistance && distance > 0.1) {
-                                            // Too close! Calculate avoidance vector
-                                            foundCollision = true;
-                                            collisionCount++;
-                                            qreal pushStrength = (minDistance - distance) / distance;
-                                            avoidX -= dx * pushStrength * 0.3; // Reduced push strength to prevent oscillation
-                                            avoidY -= dy * pushStrength * 0.3;
-                                        }
-                                    }
-                                }
-
-                                if (foundCollision && collisionCount < 5) { // Prevent getting stuck with too many neighbors
-                                    // Apply avoidance movement
-                                    creature->newX = creature->posX + avoidX;
-                                    creature->newY = creature->posY + avoidY;
-                                } else {
-                                    // No collisions OR too many neighbors (give up and rest)
-                                    creature->newX = creature->posX;
-                                    creature->newY = creature->posY;
-                                    creature->state = STATE_RESTING;
-                                    creature->restingTimeLeft = MainWindow::CREATURE_MIN_REST_TICKS +
-                                        QRandomGenerator::global()->bounded(MainWindow::CREATURE_MAX_REST_TICKS - MainWindow::CREATURE_MIN_REST_TICKS);
-                                }
-                            }
+                            // Simplify: all these states now just go to resting
+                            creature->state = STATE_RESTING;
+                            creature->restingTimeLeft = MainWindow::CREATURE_MIN_REST_TICKS +
+                                QRandomGenerator::global()->bounded(MainWindow::CREATURE_MAX_REST_TICKS - MainWindow::CREATURE_MIN_REST_TICKS);
+                            creature->newX = creature->posX;
+                            creature->newY = creature->posY;
                             break;
 
                         case STATE_RESTING:
@@ -182,49 +130,57 @@ public:
                             creature->restingTimeLeft--;
 
                             if (creature->restingTimeLeft <= 0) {
-                                // Done resting, start wandering to random point near alpha
-                                creature->state = STATE_WANDERING;
+                                // Done resting, pick random position around alpha
                                 if (creature->myAlpha) {
-                                    // Pick random point within wander range of alpha
-                                    qreal wanderDistance = MainWindow::CREATURE_MIN_WANDER_DISTANCE +
-                                        QRandomGenerator::global()->bounded(MainWindow::CREATURE_MAX_WANDER_DISTANCE - MainWindow::CREATURE_MIN_WANDER_DISTANCE);
-                                    qreal angle = QRandomGenerator::global()->bounded(360) * M_PI / 180.0; // Random angle in radians
-                                    creature->wanderTargetX = creature->myAlpha->posX + cos(angle) * wanderDistance;
-                                    creature->wanderTargetY = creature->myAlpha->posY + sin(angle) * wanderDistance;
+                                    // Pick random point within HERD_MAX_DIAMETER of alpha
+                                    qreal offsetX = QRandomGenerator::global()->bounded(MainWindow::HERD_GROUP_FOOTPRINT_SIZE * 2 + 1) - MainWindow::HERD_GROUP_FOOTPRINT_SIZE; // -300 to +300
+                                    qreal offsetY = QRandomGenerator::global()->bounded(MainWindow::HERD_GROUP_FOOTPRINT_SIZE * 2 + 1) - MainWindow::HERD_GROUP_FOOTPRINT_SIZE; // -300 to +300
+
+                                    qreal targetX = creature->myAlpha->posX + offsetX;
+                                    qreal targetY = creature->myAlpha->posY + offsetY;
+
+                                    // Keep target within world bounds
+                                    targetX = qMax(0.0, qMin(static_cast<qreal>(MainWindow::WORLD_SCENE_WIDTH), targetX));
+                                    targetY = qMax(0.0, qMin(static_cast<qreal>(MainWindow::WORLD_SCENE_HEIGHT), targetY));
+
+                                    creature->wanderTargetX = targetX;
+                                    creature->wanderTargetY = targetY;
+                                    creature->state = STATE_WANDERING;
                                 } else {
                                     // No alpha, just pick random point nearby
                                     creature->wanderTargetX = creature->posX + (QRandomGenerator::global()->bounded(2001) - 1000); // -1000 to +1000
                                     creature->wanderTargetY = creature->posY + (QRandomGenerator::global()->bounded(2001) - 1000);
+                                    creature->state = STATE_WANDERING;
                                 }
                             }
                             break;
 
                         case STATE_WANDERING:
-                            // Move toward wander target
+                            // Move toward wander target (position around alpha)
                             {
                                 qreal dx = creature->wanderTargetX - creature->posX;
                                 qreal dy = creature->wanderTargetY - creature->posY;
                                 qreal distance = sqrt(dx * dx + dy * dy);
 
                                 if (distance > creature->speed) {
-                                    // Keep moving toward wander target
+                                    // Keep moving toward target position
                                     qreal moveX = (dx / distance) * creature->speed;
                                     qreal moveY = (dy / distance) * creature->speed;
                                     creature->newX = creature->posX + moveX;
                                     creature->newY = creature->posY + moveY;
                                 } else {
-                                    // Reached wander target, start seeking herd again
+                                    // Reached target position, start resting again
                                     creature->newX = creature->wanderTargetX;
                                     creature->newY = creature->wanderTargetY;
-                                    creature->state = STATE_SEEKING_HERD;
-                                    creature->herdTarget = nullptr;
-                                    creature->hasHerdTarget = false;
+                                    creature->state = STATE_RESTING;
+                                    creature->restingTimeLeft = MainWindow::CREATURE_MIN_REST_TICKS +
+                                        QRandomGenerator::global()->bounded(MainWindow::CREATURE_MAX_REST_TICKS - MainWindow::CREATURE_MIN_REST_TICKS);
                                 }
                             }
                             break;
 
                         default:
-                            creature->state = STATE_SEEKING_HERD;
+                            creature->state = STATE_RESTING;
                             break;
                     }
                 }
@@ -384,6 +340,9 @@ MainWindow::MainWindow(QWidget* parent)
     appendOutput("Use mouse wheel to zoom, WASD to pan. Click Start to begin!");
     appendOutput("=== Each herd has its own unique color! ===");
     appendOutput("Black ring alphas lead white ring herds around the world");
+
+    // Start in fullscreen
+    showMaximized();
 }
 
 MainWindow::~MainWindow() {
@@ -426,11 +385,11 @@ void MainWindow::setupGUI() {
     QHBoxLayout* buttonLayout = new QHBoxLayout();
     startButton = new QPushButton("Start Simulation");
     clearButton = new QPushButton("Clear Output");
-    debugToggleButton = new QPushButton("Debug: ON");
+    debugToggleButton = new QPushButton("Debug: OFF");  // Changed from "Debug: ON"
 
     startButton->setStyleSheet("QPushButton { background-color: lightgreen; padding: 5px; }");
     clearButton->setStyleSheet("QPushButton { background-color: lightyellow; padding: 5px; }");
-    debugToggleButton->setStyleSheet("QPushButton { background-color: lightcyan; padding: 5px; }");
+    debugToggleButton->setStyleSheet("QPushButton { background-color: lightgray; padding: 5px; }");  // Changed from lightcyan
 
     buttonLayout->addWidget(startButton);
     buttonLayout->addWidget(debugToggleButton);
@@ -597,10 +556,29 @@ void MainWindow::eventLoopTick() {
         mHousekeepingTickCounter = 0; // Reset counter
     }
 
-    // Handle herding target selection in main thread (needs access to creature vector)
+    // Handle orphan assignment in main thread (needs access to creature vector)
     for (auto* creature : mCreatures) {
-        if (creature && creature->exists && !creature->isAlpha && creature->state == STATE_SEEKING_HERD) {
-            findHerdTarget(creature);
+        if (creature && creature->exists && !creature->isAlpha && !creature->myAlpha) {
+            // This creature needs an alpha - assign to nearest one
+            SimpleCreature* nearestAlpha = nullptr;
+            qreal nearestDistance = std::numeric_limits<qreal>::max();
+
+            for (auto* potential : mCreatures) {
+                if (potential && potential->isAlpha && potential->exists) {
+                    qreal distance = distanceBetween(creature->posX, creature->posY, potential->posX, potential->posY);
+                    if (distance < nearestDistance) {
+                        nearestDistance = distance;
+                        nearestAlpha = potential;
+                    }
+                }
+            }
+
+            if (nearestAlpha) {
+                creature->myAlpha = nearestAlpha;
+                creature->color = generateHerdColor(nearestAlpha->uniqueID);
+                creature->graphicsItem->setBrush(QBrush(creature->color));
+                creature->graphicsItem->setPen(QPen(Qt::white, CREATURE_RING_WIDTH));
+            }
         }
     }
 
@@ -703,21 +681,41 @@ SimpleCreature* MainWindow::createCreature(qreal x, qreal y, bool isAlpha) {
     creature->posY = y;
     creature->newX = x;
     creature->newY = y;
-    creature->speed = 30 + QRandomGenerator::global()->bounded(40); // 30-70 speed for regular creatures
-    creature->originalSpeed = creature->speed;
 
-    // Alphas move at half speed to let herds form around them
+    // Set speeds based on creature type
     if (isAlpha) {
-        creature->speed = creature->speed * 0.5; // Half speed for alphas
+        creature->speed = ALPHA_SPEED_SLOW;  // Alphas move slowly
+    } else {
+        creature->speed = CREATURE_SPEED_NORMAL;  // Creatures move at normal speed
     }
+    creature->originalSpeed = creature->speed;
 
     creature->size = DEFAULT_CREATURE_SIZE + QRandomGenerator::global()->bounded(50);
 
     // Alpha system
     creature->isAlpha = isAlpha;
     creature->myAlpha = nullptr;
-    creature->alphaTargetX = 0;
-    creature->alphaTargetY = 0;
+
+    // *** FIX: Initialize alpha targets using small box logic ***
+    if (isAlpha) {
+        // Give alphas small local destinations using the same box logic as normal wandering
+        qreal offsetX = QRandomGenerator::global()->bounded(ALPHA_NORMAL_WANDER_DISTANCE * 2 + 1) - ALPHA_NORMAL_WANDER_DISTANCE;
+        qreal offsetY = QRandomGenerator::global()->bounded(ALPHA_NORMAL_WANDER_DISTANCE * 2 + 1) - ALPHA_NORMAL_WANDER_DISTANCE;
+
+        qreal targetX = x + offsetX;  // Use spawn position + small offset
+        qreal targetY = y + offsetY;
+
+        // Keep target within world bounds
+        targetX = qMax(0.0, qMin(static_cast<qreal>(WORLD_SCENE_WIDTH), targetX));
+        targetY = qMax(0.0, qMin(static_cast<qreal>(WORLD_SCENE_HEIGHT), targetY));
+
+        creature->alphaTargetX = targetX;
+        creature->alphaTargetY = targetY;
+    } else {
+        creature->alphaTargetX = 0;  // Non-alphas don't use these
+        creature->alphaTargetY = 0;
+    }
+
     creature->alphaRestingTime = 0;
 
     // Herding system
@@ -742,9 +740,11 @@ SimpleCreature* MainWindow::createCreature(qreal x, qreal y, bool isAlpha) {
         // Alphas get the same herd color as their members, but with a black ring
         creature->color = generateHerdColor(creature->uniqueID); // Same color as herd
     } else {
-        creature->state = STATE_SEEKING_HERD;
+        creature->state = STATE_RESTING;  // Start followers in resting state
         // Herd members get a bright random color (will be overridden when assigned to alpha)
         creature->color = getRandomBrightColor();
+        creature->restingTimeLeft = MainWindow::CREATURE_MIN_REST_TICKS +
+            QRandomGenerator::global()->bounded(MainWindow::CREATURE_MAX_REST_TICKS - MainWindow::CREATURE_MIN_REST_TICKS);
     }
 
     // Create graphics with ring indicator
@@ -767,55 +767,8 @@ SimpleCreature* MainWindow::createCreature(qreal x, qreal y, bool isAlpha) {
 }
 
 void MainWindow::findHerdTarget(SimpleCreature* creature) {
-    if (!creature || creature->hasHerdTarget || creature->isAlpha) return;
-
-    // If creature has no alpha, try to find one first
-    if (!creature->myAlpha) {
-        // Find nearest alpha to assign to this orphan
-        SimpleCreature* nearestAlpha = nullptr;
-        qreal nearestDistance = std::numeric_limits<qreal>::max();
-
-        for (auto* potential : mCreatures) {
-            if (potential && potential->isAlpha && potential->exists) {
-                qreal distance = distanceBetween(creature->posX, creature->posY, potential->posX, potential->posY);
-                if (distance < nearestDistance) {
-                    nearestDistance = distance;
-                    nearestAlpha = potential;
-                }
-            }
-        }
-
-        if (nearestAlpha) {
-            creature->myAlpha = nearestAlpha;
-            creature->color = generateHerdColor(nearestAlpha->uniqueID);
-            creature->graphicsItem->setBrush(QBrush(creature->color));
-            creature->graphicsItem->setPen(QPen(Qt::white, CREATURE_RING_WIDTH));
-        }
-    }
-
-    // Find a random creature in the same herd (same alpha) to follow
-    QVector<SimpleCreature*> sameHerdMembers;
-
-    for (auto* potential : mCreatures) {
-        if (potential && potential != creature && potential->exists && potential->myAlpha == creature->myAlpha) {
-            qreal distance = distanceBetween(creature->posX, creature->posY, potential->posX, potential->posY);
-            if (distance < WORLD_SCENE_WIDTH * 0.4) {  // Within 40% of world width
-                sameHerdMembers.push_back(potential);
-            }
-        }
-    }
-
-    if (!sameHerdMembers.empty()) {
-        int randomIndex = QRandomGenerator::global()->bounded(sameHerdMembers.size());
-        creature->herdTarget = sameHerdMembers[randomIndex];
-        creature->hasHerdTarget = true;
-        creature->state = STATE_MOVING_TO_HERD;
-    } else if (creature->myAlpha) {
-        // No herd members found, but we have an alpha - follow the alpha directly
-        creature->herdTarget = creature->myAlpha;
-        creature->hasHerdTarget = true;
-        creature->state = STATE_MOVING_TO_HERD;
-    }
+    // This function is no longer used in the simplified system
+    // Keeping it for compatibility but it does nothing
 }
 
 void MainWindow::assignCreatureToNearestAlpha(SimpleCreature* creature, const QVector<SimpleCreature*>& alphas) {
@@ -1033,8 +986,10 @@ void MainWindow::runHousekeeping() {
                     // Keep the white ring for regular herd members (as per your preference)
                     creature->graphicsItem->setPen(QPen(Qt::white, MainWindow::CREATURE_RING_WIDTH));
 
-                    // Reset creature state to start seeking herd members
-                    creature->state = STATE_SEEKING_HERD;
+                    // Reset creature state to resting
+                    creature->state = STATE_RESTING;
+                    creature->restingTimeLeft = MainWindow::CREATURE_MIN_REST_TICKS +
+                        QRandomGenerator::global()->bounded(MainWindow::CREATURE_MAX_REST_TICKS - MainWindow::CREATURE_MIN_REST_TICKS);
                     creature->herdTarget = nullptr;
                     creature->hasHerdTarget = false;
 

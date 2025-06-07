@@ -1,8 +1,4 @@
-// Alpha behavior constants
-    static const int ALPHA_MIN_WANDER_DIST = 100;    // Min distance for alpha wandering spurts
-    static const int ALPHA_MAX_WANDER_DIST = 500;    // Max distance for alpha wandering spurts
-    static const int ALPHA_MIN_REST_DURATION = 800;  // Min ticks for alpha to rest (much longer to let herds form)
-    static const int ALPHA_MAX_REST_DURATION = 2000; // Max ticks for alpha to rest (40+// 2dsim08/mainwindow.h V202506070354 - Alpha-Led Multi-Herd System with Housekeeping
+// 2dsim08/mainwindow.h V202506070700 - Alpha-Led Multi-Herd System with Housekeeping
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
@@ -146,6 +142,7 @@ public:
     static const int ALPHA_RATIO = 25;                // 1 alpha per 25 creatures (creates ~80 herds)
     static const int HERD_MIN_SIZE = 10;              // Minimum herd size before splitting
     static const int HERD_MAX_SIZE = 50;              // Maximum herd size before splitting
+    static const int HERD_GROUP_FOOTPRINT_SIZE = 1000;   // Distance followers can be from alpha
     static const int DEFAULT_CREATURE_SIZE = 200;
     static const int CREATURES_UPDATED_PER_TICK = 1000;
     static const int CREATURE_RING_WIDTH = 40;        // Ring thickness (visible at normal zoom)
@@ -156,12 +153,20 @@ public:
     static const int CREATURE_MAX_REST_TICKS = 500;   // Maximum ticks to rest in place
     static const int CREATURE_MIN_WANDER_DISTANCE = 500;   // Min distance from alpha to wander
     static const int CREATURE_MAX_WANDER_DISTANCE = 2000;  // Max distance from alpha to wander
+    static const int CREATURE_SPEED_SLOW = 40;
+    static const int CREATURE_SPEED_NORMAL = 120;
+    static const int CREATURE_SPEED_BURST = 400;
 
     // Alpha behavior constants
     static const int ALPHA_MIN_WANDER_DIST = 3000;    // Min distance for alpha wandering spurts
     static const int ALPHA_MAX_WANDER_DIST = 8000;    // Max distance for alpha wandering spurts
-    static const int ALPHA_MIN_REST_DURATION = 400;   // Min ticks for alpha to rest (longer than creatures)
-    static const int ALPHA_MAX_REST_DURATION = 1200;  // Max ticks for alpha to rest
+    static const int ALPHA_MIN_REST_DURATION = 20;   // Min ticks for alpha to rest (longer than creatures)
+    static const int ALPHA_MAX_REST_DURATION = 200;  // Max ticks for alpha to rest
+    static const int ALPHA_SPEED_SLOW = 400;
+    static const int ALPHA_SPEED_NORMAL = 800;
+    static const int ALPHA_SPEED_BURST = 6000;
+    // Alpha wandering distance for normal daily movement
+    static const int ALPHA_NORMAL_WANDER_DISTANCE = 2500;  // Creates a 50x50 box around alpha
 
 private slots:
     void runSimulation();
