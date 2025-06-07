@@ -1,4 +1,4 @@
-// 2dsim08/mainwindow.cpp V64
+// 2dsim08/mainwindow.cpp V202506071415 - Alpha-Led Multi-Herd System with Thick Ring Indicators
 #include "mainwindow.h"
 #include <QApplication>
 #include <QFont>
@@ -23,7 +23,7 @@ void appendToOutput(const QString& text) {
     }
 }
 
-// === Creature Update Task (like 2dsim08 tasks) ===
+// === Creature Update Task (Alpha-Led Herding System) ===
 class CreatureUpdateTask : public QRunnable {
 private:
     QVector<SimpleCreature*>* mCreatures;
@@ -38,70 +38,193 @@ public:
     }
 
     void run() override {
-        QString startMsg = QString("[Thread %1] Creature Task %2 processing creatures [%3-%4)")
+        QString startMsg = QString("[Thread %1] Alpha Herd Task %2 processing creatures [%3-%4)")
                           .arg((quintptr)QThread::currentThreadId())
                           .arg(mTaskId)
                           .arg(mStartIndex)
                           .arg(mEndIndex);
         appendToOutput(startMsg);
 
-        // Process creatures - HERDING BEHAVIOR
+        // Process creatures - ALPHA-LED HERDING BEHAVIOR
         for (int i = mStartIndex; i < mEndIndex && i < mCreatures->size(); i++) {
             SimpleCreature* creature = (*mCreatures)[i];
             if (creature && creature->exists) {
 
-                // === HERDING STATE MACHINE ===
-                switch (creature->state) {
-                    case STATE_SEEKING_HERD:
-                        // Look for another creature to herd with (will be handled in main thread)
-                        break;
+                if (creature->isAlpha) {
+                    // === ALPHA BEHAVIOR ===
+                    switch (creature->state) {
+                        case STATE_ALPHA_TRAVELING:
+                            {
+                                // Move toward alpha destination
+                                qreal dx = creature->alphaTargetX - creature->posX;
+                                qreal dy = creature->alphaTargetY - creature->posY;
+                                qreal distance = sqrt(dx * dx + dy * dy);
 
-                    case STATE_MOVING_TO_HERD:
-                        if (creature->herdTarget) {
-                            // Calculate direction to herd target
-                            qreal dx = creature->herdTarget->posX - creature->posX;
-                            qreal dy = creature->herdTarget->posY - creature->posY;
-                            qreal distance = sqrt(dx * dx + dy * dy);
-
-                            if (distance > 1.0) {
-                                // Move toward herd target
-                                qreal moveX = (dx / distance) * creature->speed;
-                                qreal moveY = (dy / distance) * creature->speed;
-                                creature->newX = creature->posX + moveX;
-                                creature->newY = creature->posY + moveY;
-
-                                // Check if close enough to herd
-                                if (distance <= creature->herdingRange) {
-                                    creature->state = STATE_FINDING_SPACE;
+                                if (distance > creature->speed) {
+                                    // Keep moving toward destination
+                                    qreal moveX = (dx / distance) * creature->speed;
+                                    qreal moveY = (dy / distance) * creature->speed;
+                                    creature->newX = creature->posX + moveX;
+                                    creature->newY = creature->posY + moveY;
+                                } else {
+                                    // Reached destination, start resting
+                                    creature->newX = creature->alphaTargetX;
+                                    creature->newY = creature->alphaTargetY;
+                                    creature->state = STATE_ALPHA_RESTING;
+                                    creature->alphaRestingTime = MainWindow::ALPHA_MIN_REST_DURATION +
+                                        QRandomGenerator::global()->bounded(MainWindow::ALPHA_MAX_REST_DURATION - MainWindow::ALPHA_MIN_REST_DURATION);
                                 }
                             }
-                        } else {
+                            break;
+
+                        case STATE_ALPHA_RESTING:
+                            // Stay put and count down resting time
+                            creature->newX = creature->posX;
+                            creature->newY = creature->posY;
+                            creature->alphaRestingTime--;
+
+                            if (creature->alphaRestingTime <= 0) {
+                                // Pick new random destination within reasonable range
+                                qreal wanderDistance = MainWindow::ALPHA_MIN_WANDER_DIST +
+                                    QRandomGenerator::global()->bounded(MainWindow::ALPHA_MAX_WANDER_DIST - MainWindow::ALPHA_MIN_WANDER_DIST);
+                                qreal angle = QRandomGenerator::global()->bounded(360) * M_PI / 180.0; // Random angle in radians
+                                creature->alphaTargetX = creature->posX + cos(angle) * wanderDistance;
+                                creature->alphaTargetY = creature->posY + sin(angle) * wanderDistance;
+                                creature->state = STATE_ALPHA_TRAVELING;
+                            }
+                            break;
+
+                        default:
+                            // Default alpha state - pick initial destination
+                            creature->alphaTargetX = QRandomGenerator::global()->bounded(MainWindow::WORLD_SCENE_WIDTH);
+                            creature->alphaTargetY = QRandomGenerator::global()->bounded(MainWindow::WORLD_SCENE_HEIGHT);
+                            creature->state = STATE_ALPHA_TRAVELING;
+                            break;
+                    }
+                } else {
+                    // === HERD MEMBER BEHAVIOR ===
+                    switch (creature->state) {
+                        case STATE_SEEKING_HERD:
+                            // Look for another creature in same herd to follow (will be handled in main thread)
+                            break;
+
+                        case STATE_MOVING_TO_HERD:
+                            if (creature->herdTarget) {
+                                // Calculate direction to herd target
+                                qreal dx = creature->herdTarget->posX - creature->posX;
+                                qreal dy = creature->herdTarget->posY - creature->posY;
+                                qreal distance = sqrt(dx * dx + dy * dy);
+
+                                if (distance > creature->elbowRoomRange) {
+                                    // Move toward herd target, but only if we're not close enough
+                                    qreal moveX = (dx / distance) * creature->speed;
+                                    qreal moveY = (dy / distance) * creature->speed;
+                                    creature->newX = creature->posX + moveX;
+                                    creature->newY = creature->posY + moveY;
+                                } else {
+                                    // We're close enough - check for collisions and find proper spacing
+                                    creature->state = STATE_FINDING_SPACE;
+                                }
+                            } else {
+                                creature->state = STATE_SEEKING_HERD;
+                            }
+                            break;
+
+                        case STATE_FINDING_SPACE:
+                            // Check for collisions with other creatures and move away from them
+                            {
+                                qreal avoidX = 0;
+                                qreal avoidY = 0;
+                                bool foundCollision = false;
+
+                                // Check against all other creatures (this is expensive but necessary)
+                                for (int j = 0; j < mCreatures->size(); j++) {
+                                    SimpleCreature* other = (*mCreatures)[j];
+                                    if (other && other != creature && other->exists) {
+                                        qreal dx = other->posX - creature->posX;
+                                        qreal dy = other->posY - creature->posY;
+                                        qreal distance = sqrt(dx * dx + dy * dy);
+
+                                        // Use dynamic elbow room: creature diameter + random factor
+                                        qreal minDistance = creature->size + (creature->size * creature->elbowRoomRange);
+
+                                        if (distance < minDistance && distance > 0.1) {
+                                            // Too close! Calculate avoidance vector
+                                            foundCollision = true;
+                                            qreal pushStrength = (minDistance - distance) / distance;
+                                            avoidX -= dx * pushStrength * 0.5; // Push away from other creature
+                                            avoidY -= dy * pushStrength * 0.5;
+                                        }
+                                    }
+                                }
+
+                                if (foundCollision) {
+                                    // Apply avoidance movement
+                                    creature->newX = creature->posX + avoidX;
+                                    creature->newY = creature->posY + avoidY;
+                                } else {
+                                    // No collisions, we can rest
+                                    creature->newX = creature->posX;
+                                    creature->newY = creature->posY;
+                                    creature->state = STATE_RESTING;
+                                    creature->restingTimeLeft = MainWindow::CREATURE_MIN_REST_TICKS +
+                                        QRandomGenerator::global()->bounded(MainWindow::CREATURE_MAX_REST_TICKS - MainWindow::CREATURE_MIN_REST_TICKS);
+                                }
+                            }
+                            break;
+
+                        case STATE_RESTING:
+                            // Stay put and count down resting time
+                            creature->newX = creature->posX;
+                            creature->newY = creature->posY;
+                            creature->restingTimeLeft--;
+
+                            if (creature->restingTimeLeft <= 0) {
+                                // Done resting, start wandering to random point near alpha
+                                creature->state = STATE_WANDERING;
+                                if (creature->myAlpha) {
+                                    // Pick random point within wander range of alpha
+                                    qreal wanderDistance = MainWindow::CREATURE_MIN_WANDER_DISTANCE +
+                                        QRandomGenerator::global()->bounded(MainWindow::CREATURE_MAX_WANDER_DISTANCE - MainWindow::CREATURE_MIN_WANDER_DISTANCE);
+                                    qreal angle = QRandomGenerator::global()->bounded(360) * M_PI / 180.0; // Random angle in radians
+                                    creature->wanderTargetX = creature->myAlpha->posX + cos(angle) * wanderDistance;
+                                    creature->wanderTargetY = creature->myAlpha->posY + sin(angle) * wanderDistance;
+                                } else {
+                                    // No alpha, just pick random point nearby
+                                    creature->wanderTargetX = creature->posX + (QRandomGenerator::global()->bounded(2001) - 1000); // -1000 to +1000
+                                    creature->wanderTargetY = creature->posY + (QRandomGenerator::global()->bounded(2001) - 1000);
+                                }
+                            }
+                            break;
+
+                        case STATE_WANDERING:
+                            // Move toward wander target
+                            {
+                                qreal dx = creature->wanderTargetX - creature->posX;
+                                qreal dy = creature->wanderTargetY - creature->posY;
+                                qreal distance = sqrt(dx * dx + dy * dy);
+
+                                if (distance > creature->speed) {
+                                    // Keep moving toward wander target
+                                    qreal moveX = (dx / distance) * creature->speed;
+                                    qreal moveY = (dy / distance) * creature->speed;
+                                    creature->newX = creature->posX + moveX;
+                                    creature->newY = creature->posY + moveY;
+                                } else {
+                                    // Reached wander target, start seeking herd again
+                                    creature->newX = creature->wanderTargetX;
+                                    creature->newY = creature->wanderTargetY;
+                                    creature->state = STATE_SEEKING_HERD;
+                                    creature->herdTarget = nullptr;
+                                    creature->hasHerdTarget = false;
+                                }
+                            }
+                            break;
+
+                        default:
                             creature->state = STATE_SEEKING_HERD;
-                        }
-                        break;
-
-                    case STATE_FINDING_SPACE:
-                        // Move away from overlapping creatures (simple avoidance)
-                        creature->newX = creature->posX + (QRandomGenerator::global()->bounded(21) - 10); // -10 to +10
-                        creature->newY = creature->posY + (QRandomGenerator::global()->bounded(21) - 10);
-
-                        // After moving, check if we can rest
-                        creature->state = STATE_RESTING;
-                        creature->restingTimeLeft = 100 + QRandomGenerator::global()->bounded(200); // 100-300 ticks
-                        break;
-
-                    case STATE_RESTING:
-                        // Stay put and count down resting time
-                        creature->newX = creature->posX;
-                        creature->newY = creature->posY;
-                        creature->restingTimeLeft--;
-
-                        if (creature->restingTimeLeft <= 0) {
-                            creature->state = STATE_SEEKING_HERD;
-                            creature->herdTarget = nullptr;
-                            creature->hasHerdTarget = false;
-                        }
-                        break;
+                            break;
+                    }
                 }
 
                 // Keep creatures in bounds
@@ -118,7 +241,7 @@ public:
             QThread::msleep(delayMs);
         }
 
-        QString endMsg = QString("[Thread %1] Creature Task %2 completed")
+        QString endMsg = QString("[Thread %1] Alpha Herd Task %2 completed")
                         .arg((quintptr)QThread::currentThreadId())
                         .arg(mTaskId);
         appendToOutput(endMsg);
@@ -234,7 +357,7 @@ MainWindow::MainWindow(QWidget* parent)
     , mMetronomeRotation(0)
     , mMetronomeEnabled(true)
 {
-    setWindowTitle("2dsim08 + 2dsim07 Integration - Multithreaded Creature Simulation");
+    setWindowTitle("2dsim08 - Alpha-Led Multi-Herd System");
     setMinimumSize(1000, 700);
     g_mainWindow = this;
 
@@ -250,14 +373,13 @@ MainWindow::MainWindow(QWidget* parent)
     setupCreatures();
     setupEventLoop();
 
-    appendOutput(QString("=== HERDING SIMULATION INITIALIZED ==="));
+    appendOutput(QString("=== ALPHA-LED MULTI-HERD SIMULATION INITIALIZED ==="));
     appendOutput(QString("Thread pool: %1 cores (of %2 total)").arg(usableCores).arg(totalCores));
-    appendOutput(QString("Creatures: %1, Terrain: %2x%3").arg(STARTING_CREATURE_COUNT).arg(NUM_TERRAIN_COLS).arg(NUM_TERRAIN_ROWS));
-    appendOutput(QString("World size: %1x%2").arg(WORLD_SCENE_WIDTH).arg(WORLD_SCENE_HEIGHT));
+    appendOutput(QString("Creatures: %1 (with %2 alpha leaders)").arg(STARTING_CREATURE_COUNT).arg(STARTING_CREATURE_COUNT / ALPHA_RATIO));
+    appendOutput(QString("Terrain: %1x%2, World size: %3x%4").arg(NUM_TERRAIN_COLS).arg(NUM_TERRAIN_ROWS).arg(WORLD_SCENE_WIDTH).arg(WORLD_SCENE_HEIGHT));
     appendOutput("Use mouse wheel to zoom, WASD to pan. Click Start to begin!");
-    appendOutput("=== NEW: Alpha-Led Multi-Herd System Active! ===");
-    appendOutput("Dark red = alpha leaders, brown = herd members");
-    appendOutput("Alphas wander to random destinations, herd members follow within their herd");
+    appendOutput("=== Each herd has its own unique color! ===");
+    appendOutput("Dark red alphas lead bright colored herds around the world");
 }
 
 MainWindow::~MainWindow() {
@@ -293,7 +415,7 @@ void MainWindow::appendOutput(const QString& text) {
 void MainWindow::setupGUI() {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
 
-    statusLabel = new QLabel("Integrated Simulation Ready. Click Start to begin creature movement!");
+    statusLabel = new QLabel("Alpha-Led Multi-Herd Simulation Ready. Click Start to watch herds form!");
     statusLabel->setWordWrap(true);
     statusLabel->setStyleSheet("QLabel { background-color: lightblue; padding: 5px; }");
 
@@ -380,24 +502,40 @@ void MainWindow::setupTerrain() {
 }
 
 void MainWindow::setupCreatures() {
-    appendOutput("Creating creatures with herding behavior...");
+    appendOutput("Creating alpha-led multi-herd system...");
 
-    // Create creatures
-    for (int i = 0; i < STARTING_CREATURE_COUNT; i++) {
+    // Create alpha creatures first
+    QVector<SimpleCreature*> alphas;
+    int numAlphas = qMax(1, STARTING_CREATURE_COUNT / ALPHA_RATIO);
+
+    for (int i = 0; i < numAlphas; i++) {
         qreal x = QRandomGenerator::global()->bounded(WORLD_SCENE_WIDTH);
         qreal y = QRandomGenerator::global()->bounded(WORLD_SCENE_HEIGHT);
-        SimpleCreature* creature = createCreature(x, y);
-        mCreatures.push_back(creature);
+        SimpleCreature* alpha = createCreature(x, y, true); // true = isAlpha
+        alphas.push_back(alpha);
+        mCreatures.push_back(alpha);
     }
 
-    appendOutput(QString("Created %1 brown creatures with herding AI").arg(mCreatures.size()));
-    printCreatureSample("Initial creature sample:");
+    // Create regular herd members and assign them to alphas
+    for (int i = numAlphas; i < STARTING_CREATURE_COUNT; i++) {
+        qreal x = QRandomGenerator::global()->bounded(WORLD_SCENE_WIDTH);
+        qreal y = QRandomGenerator::global()->bounded(WORLD_SCENE_HEIGHT);
+        SimpleCreature* member = createCreature(x, y, false); // false = not alpha
+
+        // Assign to nearest alpha
+        assignCreatureToNearestAlpha(member, alphas);
+        mCreatures.push_back(member);
+    }
+
+    appendOutput(QString("Created %1 alphas (dark red) leading %2 total creatures").arg(numAlphas).arg(mCreatures.size()));
+    appendOutput(QString("Each of %1 herds has its own unique color!").arg(numAlphas));
+    printCreatureSample("Alpha and herd sample:");
 }
 
 void MainWindow::setupEventLoop() {
     // Setup event loop timer (like 2dsim07)
     connect(&mEventLoopTimer, &QTimer::timeout, this, &MainWindow::eventLoopTick);
-    mEventLoopTimer.setInterval(20); // Increased frequency: 50 FPS instead of 20 FPS
+    mEventLoopTimer.setInterval(20); // 50 FPS
     appendOutput("Event loop configured (20ms interval - 50 FPS).");
 }
 
@@ -405,9 +543,9 @@ void MainWindow::runSimulation() {
     if (!mSimulationRunning) {
         mSimulationRunning = true;
         startButton->setText("Stop Simulation");
-        statusLabel->setText("Simulation RUNNING - creatures moving west to east, using parallel processing");
+        statusLabel->setText("Simulation RUNNING - Watch alphas lead their colored herds around the world!");
         mEventLoopTimer.start();
-        appendOutput("=== SIMULATION STARTED ===");
+        appendOutput("=== ALPHA-LED MULTI-HERD SIMULATION STARTED ===");
     } else {
         mSimulationRunning = false;
         startButton->setText("Start Simulation");
@@ -435,7 +573,6 @@ void MainWindow::toggleDebugOutput() {
     } else {
         debugToggleButton->setText("Debug: OFF");
         debugToggleButton->setStyleSheet("QPushButton { background-color: lightgray; padding: 5px; }");
-        // This message will show because we haven't disabled output yet
         appendOutput("=== DEBUG OUTPUT DISABLED ===");
         appendOutput("Thread activity messages are now hidden. Simulation continues silently.");
     }
@@ -451,7 +588,7 @@ void MainWindow::eventLoopTick() {
 
     // Handle herding target selection in main thread (needs access to creature vector)
     for (auto* creature : mCreatures) {
-        if (creature && creature->exists && creature->state == STATE_SEEKING_HERD) {
+        if (creature && creature->exists && !creature->isAlpha && creature->state == STATE_SEEKING_HERD) {
             findHerdTarget(creature);
         }
     }
@@ -496,7 +633,7 @@ void MainWindow::updateGraphics() {
             creature->posY = creature->newY;
             creature->graphicsItem->setPos(creature->posX, creature->posY);
 
-            // Update color based on hunger (DON'T override with random colors!)
+            // Keep the assigned herd color (don't randomize!)
             creature->graphicsItem->setBrush(QBrush(creature->color));
 
             // Check for water collision (like 2dsim07)
@@ -547,7 +684,7 @@ void MainWindow::moveMetronome() {
 }
 
 // === Creature Methods ===
-SimpleCreature* MainWindow::createCreature(qreal x, qreal y) {
+SimpleCreature* MainWindow::createCreature(qreal x, qreal y, bool isAlpha) {
     SimpleCreature* creature = new SimpleCreature;
 
     // Initialize creature data
@@ -555,20 +692,58 @@ SimpleCreature* MainWindow::createCreature(qreal x, qreal y) {
     creature->posY = y;
     creature->newX = x;
     creature->newY = y;
-    creature->speed = 30 + QRandomGenerator::global()->bounded(40); // 30-70 speed
+    creature->speed = 30 + QRandomGenerator::global()->bounded(40); // 30-70 speed for regular creatures
     creature->originalSpeed = creature->speed;
+
+    // Alphas move at half speed to let herds form around them
+    if (isAlpha) {
+        creature->speed = creature->speed * 0.5; // Half speed for alphas
+    }
+
     creature->size = DEFAULT_CREATURE_SIZE + QRandomGenerator::global()->bounded(50);
+
+    // Alpha system
+    creature->isAlpha = isAlpha;
+    creature->myAlpha = nullptr;
+    creature->alphaTargetX = 0;
+    creature->alphaTargetY = 0;
+    creature->alphaRestingTime = 0;
 
     // Herding system
     creature->herdTarget = nullptr;
     creature->hasHerdTarget = false;
     creature->restingTimeLeft = 0;
-    creature->herdingRange = creature->size * 2.5;     // Get within 2.5 diameters
-    creature->elbowRoomRange = creature->size * 1.2;   // Personal space
+    creature->herdingRange = creature->size * 4.0;     // Seek herds within 4 diameters
 
-    // Start seeking a herd
-    creature->state = STATE_SEEKING_HERD;
-    creature->color = QColor(139, 69, 19);  // Saddle brown color
+    // Dynamic elbow room: randomize each creature's personal space preference
+    creature->elbowRoomRange = QRandomGenerator::global()->bounded(static_cast<int>(ELBOW_ROOM_FACTOR * 100)) / 100.0; // 0.0 to ELBOW_ROOM_FACTOR
+
+    // Wandering system
+    creature->wanderTargetX = 0;
+    creature->wanderTargetY = 0;
+
+    // Set initial state and color
+    if (isAlpha) {
+        creature->state = STATE_ALPHA_TRAVELING;
+        creature->color = QColor(139, 0, 0);  // Dark red for alphas
+        // Alphas get random destinations within reasonable range from their starting position
+        qreal wanderDistance = ALPHA_MIN_WANDER_DIST +
+            QRandomGenerator::global()->bounded(ALPHA_MAX_WANDER_DIST - ALPHA_MIN_WANDER_DIST);
+        qreal angle = QRandomGenerator::global()->bounded(360) * M_PI / 180.0; // Random angle in radians
+        creature->alphaTargetX = creature->posX + cos(angle) * wanderDistance;
+        creature->alphaTargetY = creature->posY + sin(angle) * wanderDistance;
+
+        // Keep alpha targets within world bounds
+        if (creature->alphaTargetX < 0) creature->alphaTargetX = wanderDistance;
+        if (creature->alphaTargetX > WORLD_SCENE_WIDTH) creature->alphaTargetX = WORLD_SCENE_WIDTH - wanderDistance;
+        if (creature->alphaTargetY < 0) creature->alphaTargetY = wanderDistance;
+        if (creature->alphaTargetY > WORLD_SCENE_HEIGHT) creature->alphaTargetY = WORLD_SCENE_HEIGHT - wanderDistance;
+    } else {
+        creature->state = STATE_SEEKING_HERD;
+        // Herd members get a bright random color (will be overridden when assigned to alpha)
+        creature->color = getRandomBrightColor();
+    }
+
     creature->exists = true;
     creature->uniqueID = getUniqueID();
 
@@ -585,28 +760,51 @@ SimpleCreature* MainWindow::createCreature(qreal x, qreal y) {
 }
 
 void MainWindow::findHerdTarget(SimpleCreature* creature) {
-    if (!creature || creature->hasHerdTarget) return;
+    if (!creature || creature->hasHerdTarget || creature->isAlpha) return;
 
-    // Find a random creature to herd with
-    if (mCreatures.size() > 1) {
-        int attempts = 10;  // Don't search forever
-        while (attempts > 0) {
-            int randomIndex = QRandomGenerator::global()->bounded(mCreatures.size());
-            SimpleCreature* potential = mCreatures[randomIndex];
+    // Find a random creature in the same herd (same alpha) to follow
+    QVector<SimpleCreature*> sameHerdMembers;
 
-            if (potential && potential != creature && potential->exists) {
-                // Check if target is not too far away (reasonable herding distance)
-                qreal distance = distanceBetween(creature->posX, creature->posY,
-                                               potential->posX, potential->posY);
-                if (distance < WORLD_SCENE_WIDTH * 0.3) {  // Within 30% of world width
-                    creature->herdTarget = potential;
-                    creature->hasHerdTarget = true;
-                    creature->state = STATE_MOVING_TO_HERD;
-                    break;
-                }
+    for (auto* potential : mCreatures) {
+        if (potential && potential != creature && potential->exists && potential->myAlpha == creature->myAlpha) {
+            qreal distance = distanceBetween(creature->posX, creature->posY, potential->posX, potential->posY);
+            if (distance < WORLD_SCENE_WIDTH * 0.4) {  // Within 40% of world width
+                sameHerdMembers.push_back(potential);
             }
-            attempts--;
         }
+    }
+
+    if (!sameHerdMembers.empty()) {
+        int randomIndex = QRandomGenerator::global()->bounded(sameHerdMembers.size());
+        creature->herdTarget = sameHerdMembers[randomIndex];
+        creature->hasHerdTarget = true;
+        creature->state = STATE_MOVING_TO_HERD;
+    }
+}
+
+void MainWindow::assignCreatureToNearestAlpha(SimpleCreature* creature, const QVector<SimpleCreature*>& alphas) {
+    if (!creature || creature->isAlpha || alphas.empty()) return; // Don't assign alphas to other alphas!
+
+    // Find nearest alpha
+    SimpleCreature* nearestAlpha = nullptr;
+    qreal nearestDistance = std::numeric_limits<qreal>::max();
+
+    for (auto* alpha : alphas) {
+        if (alpha && alpha->isAlpha) {
+            qreal distance = distanceBetween(creature->posX, creature->posY, alpha->posX, alpha->posY);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestAlpha = alpha;
+            }
+        }
+    }
+
+    if (nearestAlpha) {
+        creature->myAlpha = nearestAlpha;
+        // Give this creature the same color as its alpha's herd
+        creature->color = generateHerdColor(nearestAlpha->uniqueID);
+        // Keep the black ring for regular herd members
+        creature->graphicsItem->setPen(QPen(Qt::black, CREATURE_RING_WIDTH));
     }
 }
 
@@ -672,7 +870,7 @@ TerrainType MainWindow::findTerrainTypeByXY(qreal x, qreal y) {
 // === Utility Methods ===
 void MainWindow::printCreatureSample(const QString& label) {
     appendOutput(label);
-    int sampleSize = qMin(5, mCreatures.size());
+    int sampleSize = qMin(8, mCreatures.size()); // Show more samples to see alphas and herds
     for (int i = 0; i < sampleSize; i++) {
         SimpleCreature* creature = mCreatures[i];
         QString stateStr;
@@ -681,15 +879,21 @@ void MainWindow::printCreatureSample(const QString& label) {
             case STATE_MOVING_TO_HERD: stateStr = "moving"; break;
             case STATE_FINDING_SPACE: stateStr = "spacing"; break;
             case STATE_RESTING: stateStr = "resting"; break;
+            case STATE_WANDERING: stateStr = "wandering"; break;
             case STATE_ALPHA_TRAVELING: stateStr = "alpha_travel"; break;
             case STATE_ALPHA_RESTING: stateStr = "alpha_rest"; break;
         }
-        appendOutput(QString("  Creature %1: pos(%2,%3) speed=%4 state=%5")
+        QString typeStr = creature->isAlpha ? "ALPHA" : "member";
+        QString alphaInfo = creature->myAlpha ? QString("alpha%1").arg(creature->myAlpha->uniqueID) : "none";
+
+        appendOutput(QString("  %1 %2: pos(%3,%4) speed=%5 state=%6 follows=%7")
+                    .arg(typeStr)
                     .arg(creature->uniqueID)
                     .arg(creature->posX, 0, 'f', 1)
                     .arg(creature->posY, 0, 'f', 1)
                     .arg(creature->speed, 0, 'f', 1)
-                    .arg(stateStr));
+                    .arg(stateStr)
+                    .arg(alphaInfo));
     }
 }
 
@@ -702,6 +906,39 @@ QColor MainWindow::getRandomColor() {
     int g = QRandomGenerator::global()->bounded(256);
     int b = QRandomGenerator::global()->bounded(256);
     return QColor(r, g, b);
+}
+
+QColor MainWindow::getRandomBrightColor() {
+    // Generate bright, saturated colors for better visibility
+    int colorChoice = QRandomGenerator::global()->bounded(12);
+    switch (colorChoice) {
+        case 0: return QColor(255, 100, 100);  // Bright red
+        case 1: return QColor(100, 255, 100);  // Bright green
+        case 2: return QColor(100, 100, 255);  // Bright blue
+        case 3: return QColor(255, 255, 100);  // Bright yellow
+        case 4: return QColor(255, 100, 255);  // Bright magenta
+        case 5: return QColor(100, 255, 255);  // Bright cyan
+        case 6: return QColor(255, 165, 0);    // Orange
+        case 7: return QColor(255, 20, 147);   // Deep pink
+        case 8: return QColor(50, 205, 50);    // Lime green
+        case 9: return QColor(138, 43, 226);   // Blue violet
+        case 10: return QColor(255, 140, 0);   // Dark orange
+        case 11: return QColor(30, 144, 255);  // Dodger blue
+        default: return QColor(255, 100, 100); // Default bright red
+    }
+}
+
+QColor MainWindow::generateHerdColor(int alphaID) {
+    // Generate consistent herd colors based on alpha ID
+    // Use the alpha ID as a seed for consistent color generation
+    QRandomGenerator generator(alphaID);
+
+    // Generate bright, saturated colors for each herd
+    int hue = generator.bounded(360);  // 0-359 degrees on color wheel
+    int saturation = 200 + generator.bounded(56); // 200-255 (high saturation)
+    int value = 200 + generator.bounded(56);      // 200-255 (high brightness)
+
+    return QColor::fromHsv(hue, saturation, value);
 }
 
 int MainWindow::getUniqueID() {

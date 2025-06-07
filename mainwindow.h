@@ -1,4 +1,8 @@
-// 2dsim08/mainwindow.h V57
+// Alpha behavior constants
+    static const int ALPHA_MIN_WANDER_DIST = 100;    // Min distance for alpha wandering spurts
+    static const int ALPHA_MAX_WANDER_DIST = 500;    // Max distance for alpha wandering spurts
+    static const int ALPHA_MIN_REST_DURATION = 800;  // Min ticks for alpha to rest (much longer to let herds form)
+    static const int ALPHA_MAX_REST_DURATION = 2000; // Max ticks for alpha to rest (40+// 2dsim08/mainwindow.h V202506071415 - Alpha-Led Multi-Herd System with Thick Ring Indicators
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
@@ -32,15 +36,16 @@ enum TerrainType {
 };
 
 enum CreatureState {
-    STATE_SEEKING_HERD,      // Looking for another creature to herd with
-    STATE_MOVING_TO_HERD,    // Moving toward herd target
+    STATE_SEEKING_HERD,      // Looking for another creature in same herd to follow
+    STATE_MOVING_TO_HERD,    // Moving toward herd target (same herd member)
     STATE_FINDING_SPACE,     // Trying to find elbow room (avoiding overlap)
     STATE_RESTING,           // Socially satisfied, resting
+    STATE_WANDERING,         // Moving to random point near alpha
     STATE_ALPHA_TRAVELING,   // Alpha moving to chosen destination
     STATE_ALPHA_RESTING      // Alpha resting at destination
 };
 
-// === Simple Structs (herding behavior with alphas) ===
+// === Simple Structs (Alpha-Led Multi-Herd System) ===
 struct SimpleCreature {
     // Position and movement
     qreal posX;
@@ -51,23 +56,27 @@ struct SimpleCreature {
     qreal originalSpeed;
     qreal size;
 
-    // Alpha system (Scheme 3)
+    // Alpha system
     bool isAlpha;
     SimpleCreature* myAlpha;         // Which alpha do I follow?
     qreal alphaTargetX;              // For alphas: destination X
     qreal alphaTargetY;              // For alphas: destination Y
     int alphaRestingTime;            // For alphas: how long to rest at destination
 
-    // Herding system (within herd only now)
-    SimpleCreature* herdTarget;
+    // Herding system (within herd only)
+    SimpleCreature* herdTarget;      // Random member of same herd to follow
     bool hasHerdTarget;
     int restingTimeLeft;
     qreal herdingRange;      // How close to get to herd target
-    qreal elbowRoomRange;    // Personal space distance
+    qreal elbowRoomRange;    // Personal space distance (dynamically calculated)
+
+    // Wandering system
+    qreal wanderTargetX;     // Random wander destination X
+    qreal wanderTargetY;     // Random wander destination Y
 
     // Graphics and state
     QGraphicsEllipseItem* graphicsItem;
-    QColor color;
+    QColor color;            // Herd color (shared among herd members)
     CreatureState state;
     bool exists;
     int uniqueID;
@@ -130,9 +139,25 @@ public:
     static const int NUM_TERRAIN_ROWS = 56;
     static const int TERRAIN_SIZE = WORLD_SCENE_WIDTH / 100;
     static const int STARTING_CREATURE_COUNT = 2000;  // Good number for multiple herds
-    static const int ALPHA_RATIO = 25;                // 1 alpha per 25 creatures
+    static const int ALPHA_RATIO = 25;                // 1 alpha per 25 creatures (creates ~80 herds)
+    static const int HERD_MIN_SIZE = 10;              // Minimum herd size before splitting
+    static const int HERD_MAX_SIZE = 50;              // Maximum herd size before splitting
     static const int DEFAULT_CREATURE_SIZE = 200;
     static const int CREATURES_UPDATED_PER_TICK = 1000;
+    static const int CREATURE_RING_WIDTH = 40;        // Ring thickness (visible at normal zoom)
+
+    // Elbow room and behavior constants
+    static constexpr qreal ELBOW_ROOM_FACTOR = 2.0;   // 0-10: 0=touching, 10=up to 10x diameter apart
+    static const int CREATURE_MIN_REST_TICKS = 100;   // Minimum ticks to rest in place
+    static const int CREATURE_MAX_REST_TICKS = 500;   // Maximum ticks to rest in place
+    static const int CREATURE_MIN_WANDER_DISTANCE = 500;   // Min distance from alpha to wander
+    static const int CREATURE_MAX_WANDER_DISTANCE = 2000;  // Max distance from alpha to wander
+
+    // Alpha behavior constants
+    static const int ALPHA_MIN_WANDER_DIST = 3000;    // Min distance for alpha wandering spurts
+    static const int ALPHA_MAX_WANDER_DIST = 8000;    // Max distance for alpha wandering spurts
+    static const int ALPHA_MIN_REST_DURATION = 400;   // Min ticks for alpha to rest (longer than creatures)
+    static const int ALPHA_MAX_REST_DURATION = 1200;  // Max ticks for alpha to rest
 
 private slots:
     void runSimulation();
@@ -183,10 +208,9 @@ private:
     void moveMetronome();
 
     // === Creature Methods ===
-    SimpleCreature* createCreature(qreal x, qreal y);
+    SimpleCreature* createCreature(qreal x, qreal y, bool isAlpha = false);
     void findHerdTarget(SimpleCreature* creature);
-    void assignCreatureToNearestAlpha(SimpleCreature* creature);
-    void updateAlphaBehavior(SimpleCreature* alpha);
+    void assignCreatureToNearestAlpha(SimpleCreature* creature, const QVector<SimpleCreature*>& alphas);
     qreal distanceBetween(qreal x1, qreal y1, qreal x2, qreal y2);
 
     // === Terrain Methods ===
@@ -198,6 +222,8 @@ private:
     void printCreatureSample(const QString& label);
     bool isValidCoordinate(qreal x, qreal y);
     QColor getRandomColor();
+    QColor getRandomBrightColor();
+    QColor generateHerdColor(int alphaID);
     int getUniqueID();
 };
 
