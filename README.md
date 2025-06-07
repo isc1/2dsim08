@@ -1,2 +1,3 @@
-# 2dsim08
- yet another 2d sim
+# === README.md ===
+#2dsim08
+Multithreaded creature sim
