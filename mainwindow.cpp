@@ -1,739 +1,607 @@
 #include "mainwindow.h"
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QLabel>
-#include <QPushButton>
-#include <QTextEdit>
-#include <QThreadPool>
+#include <QApplication>
+#include <QFont>
+#include <QBrush>
+#include <QPen>
 #include <QRunnable>
 #include <QThread>
 #include <QElapsedTimer>
-#include <QMutex>
-#include <QMutexLocker>
 #include <QMetaObject>
-#include <QApplication>
-#include <QRandomGenerator>
-#include <QVector> // Added for QVector
-// QAtomicInt is typically included via QtCore/qatomic.h or QtCore/qglobal.h
 #include <algorithm>
-#include <random> // For std::mt19937
-#include <atomic> // For std::atomic (though one use case is replaced)
-#include <iostream>
-#include <iomanip>
-#include <sstream>
+#include <random>
 #include <chrono>
-#include <functional>
+#include <cmath>
 
-// Global pointer to main window for output
+// Make mDebugOutputEnabled accessible to the global function
 MainWindow* g_mainWindow = nullptr;
 
-// Helper function to append text to the main window (thread-safe)
+// Helper function for thread-safe output
 void appendToOutput(const QString& text) {
-    if (g_mainWindow) {
+    if (g_mainWindow && g_mainWindow->mDebugOutputEnabled) {
         g_mainWindow->appendOutput(text);
     }
 }
 
-// === Task 1: Original Parallel Sort (Refactored to use shared pool) ===
-
-class RandomGenTask : public QRunnable {
+// === Creature Update Task (like 2dsim08 tasks) ===
+class CreatureUpdateTask : public QRunnable {
 private:
-    std::vector<int>* data;
-    int startIndex;
-    int endIndex;
-    int maxValue;
+    QVector<SimpleCreature*>* mCreatures;
+    int mStartIndex;
+    int mEndIndex;
+    int mTaskId;
 
 public:
-    RandomGenTask(std::vector<int>* vec, int start, int end, int maxVal = MainWindow::VECTOR_SIZE)
-        : data(vec), startIndex(start), endIndex(end), maxValue(maxVal) {
+    CreatureUpdateTask(QVector<SimpleCreature*>* creatures, int start, int end, int taskId)
+        : mCreatures(creatures), mStartIndex(start), mEndIndex(end), mTaskId(taskId) {
         setAutoDelete(true);
     }
 
     void run() override {
-        std::random_device rd;
-        std::mt19937 gen(rd() ^ ( (std::mt19937::result_type)
-                                 std::chrono::duration_cast<std::chrono::seconds>(
-                                     std::chrono::system_clock::now().time_since_epoch()
-                                 ).count() +
-                                 (std::mt19937::result_type)
-                                 std::hash<std::thread::id>()(std::this_thread::get_id()) ) );
-        std::uniform_int_distribution<> dis(1, maxValue);
-
-        for (int i = startIndex; i < endIndex; i++) {
-            (*data)[i] = dis(gen);
-        }
-    }
-};
-
-class SortTask : public QRunnable {
-private:
-    std::vector<int>* data;
-    int startIndex;
-    int endIndex;
-    int taskId;
-
-public:
-    SortTask(std::vector<int>* vec, int start, int end, int id)
-        : data(vec), startIndex(start), endIndex(end), taskId(id) {
-        setAutoDelete(true);
-    }
-
-    void run() override {
-        QString startMsg = QString("[Thread %1] Task %2 sorting range [%3-%4)")
+        QString startMsg = QString("[Thread %1] Creature Task %2 processing creatures [%3-%4)")
                           .arg((quintptr)QThread::currentThreadId())
-                          .arg(taskId)
-                          .arg(startIndex)
-                          .arg(endIndex);
+                          .arg(mTaskId)
+                          .arg(mStartIndex)
+                          .arg(mEndIndex);
         appendToOutput(startMsg);
 
-        std::sort(data->begin() + startIndex, data->begin() + endIndex);
+        // Process creatures in this chunk (west to east movement like 2dsim07)
+        for (int i = mStartIndex; i < mEndIndex && i < mCreatures->size(); i++) {
+            SimpleCreature* creature = (*mCreatures)[i];
+            if (creature && creature->exists) {
+                // Move west to east
+                creature->newX = creature->posX + creature->speed;
+
+                // Wrap around at world edge or reset randomly (like 2dsim07)
+                if (creature->newX > MainWindow::WORLD_SCENE_WIDTH) {
+                    creature->newX = 0;
+                    creature->newY = QRandomGenerator::global()->bounded(MainWindow::WORLD_SCENE_HEIGHT);
+                }
+
+                // Update color randomly (like 2dsim07's tickCreatureAppearance)
+                if (QRandomGenerator::global()->bounded(100) < 5) { // 5% chance
+                    int r = QRandomGenerator::global()->bounded(256);
+                    int g = QRandomGenerator::global()->bounded(256);
+                    int b = QRandomGenerator::global()->bounded(256);
+                    creature->color = QColor(r, g, b);
+                }
+            }
+        }
+
+        // Simulate processing time based on core utilization (from 2dsim08)
         if (MainWindow::USE_PCT_CORE < 100) {
-            int delayMs = (100 - MainWindow::USE_PCT_CORE) * 2;
+            int delayMs = (100 - MainWindow::USE_PCT_CORE) * 1;
             QThread::msleep(delayMs);
         }
 
-        QString endMsg = QString("[Thread %1] Task %2 completed sorting")
+        QString endMsg = QString("[Thread %1] Creature Task %2 completed")
                         .arg((quintptr)QThread::currentThreadId())
-                        .arg(taskId);
+                        .arg(mTaskId);
         appendToOutput(endMsg);
     }
 };
 
-class MergeTask : public QRunnable {
-private:
-    std::vector<int>* data;
-    int start1, end1;
-    int start2, end2;
-    int taskId;
+// === Custom GraphicsView Implementation (from 2dsim07) ===
+CustomGraphicsView::CustomGraphicsView(QGraphicsScene *scene, QWidget *parent)
+    : QGraphicsView(scene, parent), mCurrentScaleFactor(1.0), mWASDdelta(100.0)
+{
+    setViewportUpdateMode(QGraphicsView::BoundingRectViewportUpdate);
+    setDragMode(QGraphicsView::ScrollHandDrag);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setAlignment(Qt::AlignCenter);
+}
 
-public:
-    MergeTask(std::vector<int>* vec, int s1, int e1, int s2, int e2, int id)
-        : data(vec), start1(s1), end1(e1), start2(s2), end2(e2), taskId(id) {
-        setAutoDelete(true);
+void CustomGraphicsView::zoomAllTheWayOut() {
+    if (scene()) {
+        mCurrentScaleFactor = scene()->sceneRect().width() / width();
+        scale(mCurrentScaleFactor, mCurrentScaleFactor);
+        fitInView(scene()->sceneRect(), Qt::KeepAspectRatio);
     }
+}
 
-    void run() override {
-        QString startMsg = QString("[Thread %1] Merge Task %2 merging ranges [%3-%4) and [%5-%6)")
-                          .arg((quintptr)QThread::currentThreadId())
-                          .arg(taskId)
-                          .arg(start1)
-                          .arg(end1)
-                          .arg(start2)
-                          .arg(end2);
-        appendToOutput(startMsg);
+void CustomGraphicsView::zoom(int inOrOut) {
+    double scaleFactor = std::pow(1.125, inOrOut);
+    scale(scaleFactor, scaleFactor);
+    mCurrentScaleFactor = transform().m11();
 
-        std::vector<int> temp;
-        temp.reserve((end1 - start1) + (end2 - start2));
-        std::merge(data->begin() + start1, data->begin() + end1,
-                   data->begin() + start2, data->begin() + end2,
-                   std::back_inserter(temp));
-        std::copy(temp.begin(), temp.end(), data->begin() + start1);
-        if (MainWindow::USE_PCT_CORE < 100) {
-            int delayMs = (100 - MainWindow::USE_PCT_CORE) * 2;
-            QThread::msleep(delayMs);
-        }
-
-        QString endMsg = QString("[Thread %1] Merge Task %2 completed")
-                        .arg((quintptr)QThread::currentThreadId())
-                        .arg(taskId);
-        appendToOutput(endMsg);
+    if (scene() &&
+        scene()->sceneRect().width() * transform().m11() < width() &&
+        scene()->sceneRect().height() * transform().m22() < height()) {
+        fitInView(scene()->sceneRect(), Qt::KeepAspectRatio);
     }
-};
+}
 
-class ParallelSorter {
-private:
-    QThreadPool* m_pool;    // Declared first
-    std::vector<int>* data; // Declared second
-public:
-    // Initializer list order matches declaration order
-    ParallelSorter(std::vector<int>* vec, QThreadPool* pool) : m_pool(pool), data(vec) {
-        appendToOutput(QString("ParallelSorter using shared pool with max %1 threads.").arg(m_pool->maxThreadCount()));
-        appendToOutput(QString("Core utilization set to %1%").arg(MainWindow::USE_PCT_CORE));
-        appendToOutput(QString("Main thread ID: %1").arg((quintptr)QThread::currentThreadId()));
-    }
-
-    void parallelSort() {
-        int vectorSize = data->size();
-        int numThreads = m_pool->maxThreadCount();
-        if (numThreads == 0) {
-            appendToOutput("Error: Thread pool has 0 max threads. Cannot sort.");
+void CustomGraphicsView::zoomOverMouse(int inOrOut, QPoint mousePos) {
+    if (inOrOut == ZOOM_OUT && scene()) {
+        if (scene()->sceneRect().width() * transform().m11() <= width() &&
+            scene()->sceneRect().height() * transform().m22() <= height()) {
             return;
         }
-        int chunkSize = (vectorSize > 0 && numThreads > 0) ? std::max(1, vectorSize / numThreads) : 1;
-
-        appendToOutput("=== PHASE 1: Sorting chunks in parallel ===");
-        appendToOutput(QString("Vector size: %1").arg(vectorSize));
-        appendToOutput(QString("Chunk size: %1 (numThreads: %2)").arg(chunkSize).arg(numThreads));
-
-        for (int i = 0; i < numThreads; i++) {
-            int start = i * chunkSize;
-            int end = (i == numThreads - 1) ? vectorSize : (i + 1) * chunkSize;
-            if (start >= vectorSize) break;
-            end = std::min(end, vectorSize);
-            if (start >= end) continue;
-
-            SortTask* task = new SortTask(data, start, end, i);
-            m_pool->start(task);
-        }
-
-        while (!m_pool->waitForDone(100)) {
-            QApplication::processEvents();
-        }
-
-        appendToOutput("=== PHASE 2: Merging sorted chunks ===");
-        std::vector<std::pair<int, int>> chunks;
-        for (int i = 0; i < numThreads; i++) {
-            int start = i * chunkSize;
-            int end = (i == numThreads - 1) ? vectorSize : (i + 1) * chunkSize;
-            if (start >= vectorSize) break;
-            end = std::min(end, vectorSize);
-            if (start >= end) continue;
-            chunks.push_back({start, end});
-        }
-
-        int mergeTaskId = 0;
-        while (chunks.size() > 1) {
-            std::vector<std::pair<int, int>> newChunks;
-            for (size_t i = 0; i < chunks.size(); i += 2) {
-                if (i + 1 < chunks.size()) {
-                    int start1 = chunks[i].first;
-                    int end1 = chunks[i].second;
-                    int start2 = chunks[i + 1].first;
-                    int end2 = chunks[i + 1].second;
-                    MergeTask* mergeTask = new MergeTask(data, start1, end1, start2, end2, mergeTaskId++);
-                    m_pool->start(mergeTask);
-                    newChunks.push_back({start1, end2});
-                } else {
-                    newChunks.push_back(chunks[i]);
-                }
-            }
-            while (!m_pool->waitForDone(100)) {
-                QApplication::processEvents();
-            }
-            chunks = newChunks;
-        }
-        appendToOutput("=== Sorting complete! ===");
     }
-};
 
-bool isSorted(const std::vector<int>& vec) {
-    for (size_t i = 1; i < vec.size(); i++) {
-        if (vec[i] < vec[i - 1]) {
-            return false;
-        }
-    }
-    return true;
+    QPointF targetViewportPos = mousePos;
+    QPointF targetScenePos = mapToScene(mousePos);
+    centerOn(targetScenePos);
+
+    double scaleFactor = std::pow(1.125, inOrOut);
+    scale(scaleFactor, scaleFactor);
+    mCurrentScaleFactor = transform().m11();
+
+    QPointF deltaViewportPos = targetViewportPos - QPointF(viewport()->width() / 2.0, viewport()->height() / 2.0);
+    QPointF viewportCenter = mapFromScene(targetScenePos) - deltaViewportPos;
+    centerOn(mapToScene(viewportCenter.toPoint()));
 }
 
-void printSample(const std::vector<int>& vec, const QString& label) {
-    appendToOutput(label);
-    QString firstElements = "First 10 elements: ";
-    int firstCount = std::min(10, (int)vec.size());
-    for (int i = 0; i < firstCount; i++) {
-        firstElements += QString::number(vec[i]);
-        if (i < firstCount - 1) firstElements += ", ";
-    }
-    appendToOutput(firstElements);
-
-    if (vec.empty()) return;
-
-    QString lastElements = "Last 10 elements: ";
-    int lastCount = std::min(10, (int)vec.size());
-    for (size_t i = std::max(0, (int)vec.size() - lastCount); i < vec.size(); i++) {
-        lastElements += QString::number(vec[i]);
-        if (i < vec.size() - 1) lastElements += ", ";
-    }
-    appendToOutput(lastElements);
+void CustomGraphicsView::mousePressEvent(QMouseEvent *event) {
+    QGraphicsView::mousePressEvent(event);
 }
 
-
-// === Task 2: String Matrix Population and Sorting ===
-
-QString generateRandomString(int length) {
-    const QString possibleCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
-    QString randomString;
-    randomString.reserve(length);
-    for (int i = 0; i < length; ++i) {
-        int index = QRandomGenerator::global()->bounded(possibleCharacters.length());
-        randomString.append(possibleCharacters.at(index));
+void CustomGraphicsView::wheelEvent(QWheelEvent *event) {
+    int inOrOut = ZOOM_IN;
+    if (event->delta() < 0) {
+        inOrOut = ZOOM_OUT;
     }
-    return randomString;
+    zoomOverMouse(inOrOut, event->pos());
 }
 
-class PopulateStringRowTask : public QRunnable {
-private:
-    std::vector<std::vector<QString>>* m_matrix;
-    int m_rowIndex;
-    int m_numCols;
-    int m_stringLength;
+void CustomGraphicsView::keyPressEvent(QKeyEvent *event) {
+    int key = event->key();
+    QPoint viewportCenter = QPoint(viewport()->rect().width()/2, viewport()->rect().height()/2);
+    QPointF scenePointAtViewCenter = mapToScene(viewportCenter.x(), viewportCenter.y());
+    QPointF newCenter = scenePointAtViewCenter;
 
-public:
-    PopulateStringRowTask(std::vector<std::vector<QString>>* matrix, int rowIndex, int numCols, int stringLength)
-        : m_matrix(matrix), m_rowIndex(rowIndex), m_numCols(numCols), m_stringLength(stringLength) {
-        setAutoDelete(true);
+    switch(key) {
+        case Qt::Key_W:
+        case Qt::Key_Up:
+            newCenter.setY(scenePointAtViewCenter.y() - mWASDdelta);
+            centerOn(newCenter);
+            break;
+        case Qt::Key_A:
+        case Qt::Key_Left:
+            newCenter.setX(scenePointAtViewCenter.x() - mWASDdelta);
+            centerOn(newCenter);
+            break;
+        case Qt::Key_S:
+        case Qt::Key_Down:
+            newCenter.setY(scenePointAtViewCenter.y() + mWASDdelta);
+            centerOn(newCenter);
+            break;
+        case Qt::Key_D:
+        case Qt::Key_Right:
+            newCenter.setX(scenePointAtViewCenter.x() + mWASDdelta);
+            centerOn(newCenter);
+            break;
+        default:
+            break;
     }
+}
 
-    void run() override {
-        std::vector<QString>& row = (*m_matrix)[m_rowIndex];
-        row.resize(m_numCols);
-        for (int j = 0; j < m_numCols; ++j) {
-            row[j] = generateRandomString(m_stringLength);
-        }
-    }
-};
-
-class SortStringRowTask : public QRunnable {
-private:
-    std::vector<std::vector<QString>>* m_matrix;
-    int m_rowIndex;
-
-public:
-    SortStringRowTask(std::vector<std::vector<QString>>* matrix, int rowIndex)
-        : m_matrix(matrix), m_rowIndex(rowIndex) {
-        setAutoDelete(true);
-    }
-
-    void run() override {
-        std::sort((*m_matrix)[m_rowIndex].begin(), (*m_matrix)[m_rowIndex].end());
-    }
-};
-
-class StringMatrixProcessor {
-private:
-    std::vector<std::vector<QString>>* m_matrix;
-    QThreadPool* m_pool;
-    int m_numRows;
-    int m_numCols;
-    int m_stringLength;
-
-public:
-    StringMatrixProcessor(std::vector<std::vector<QString>>* matrix, QThreadPool* pool, int rows, int cols, int strLen)
-        : m_matrix(matrix), m_pool(pool), m_numRows(rows), m_numCols(cols), m_stringLength(strLen) {}
-
-    void populate() {
-        appendToOutput(QString("Populating %1x%2 string matrix with %3-char strings...").arg(m_numRows).arg(m_numCols).arg(m_stringLength));
-        for (int i = 0; i < m_numRows; ++i) {
-            PopulateStringRowTask* task = new PopulateStringRowTask(m_matrix, i, m_numCols, m_stringLength);
-            m_pool->start(task);
-        }
-        while (!m_pool->waitForDone(100)) { QApplication::processEvents(); }
-        appendToOutput("String matrix population complete.");
-    }
-
-    void sortRows() {
-        appendToOutput(QString("Sorting %1 rows of string matrix...").arg(m_numRows));
-        for (int i = 0; i < m_numRows; ++i) {
-            SortStringRowTask* task = new SortStringRowTask(m_matrix, i);
-            m_pool->start(task);
-        }
-        while (!m_pool->waitForDone(100)) { QApplication::processEvents(); }
-        appendToOutput("String matrix row sorting complete.");
-    }
-};
-
-
-// === Task 3: Decrement Vector Elements ===
-
-class PopulateDecrementVectorTask : public QRunnable {
-private:
-    std::vector<int>* m_data;
-    int m_startIndex;
-    int m_endIndex;
-    int m_maxValue;
-public:
-    PopulateDecrementVectorTask(std::vector<int>* data, int start, int end, int maxValue)
-        : m_data(data), m_startIndex(start), m_endIndex(end), m_maxValue(maxValue) {
-        setAutoDelete(true);
-    }
-    void run() override {
-        std::random_device rd;
-        std::mt19937 gen(rd() ^ ( (std::mt19937::result_type)
-                                 std::chrono::duration_cast<std::chrono::seconds>(
-                                     std::chrono::system_clock::now().time_since_epoch()
-                                 ).count() +
-                                 (std::mt19937::result_type)
-                                 std::hash<std::thread::id>()(std::this_thread::get_id()) ) );
-        std::uniform_int_distribution<> dis(1, m_maxValue);
-        for (int i = m_startIndex; i < m_endIndex; ++i) {
-            (*m_data)[i] = dis(gen);
-        }
-    }
-};
-
-class DecrementChunkTask : public QRunnable {
-private:
-    std::vector<int>* m_data;
-    int m_startIndex;
-    int m_endIndex;
-    QAtomicInt* m_chunkNonZeroCount; // Changed to QAtomicInt*
-
-public:
-    DecrementChunkTask(std::vector<int>* data, int start, int end, QAtomicInt* chunkNonZeroCount) // Changed type
-        : m_data(data), m_startIndex(start), m_endIndex(end), m_chunkNonZeroCount(chunkNonZeroCount) {
-        setAutoDelete(true);
-    }
-
-    void run() override {
-        int currentNonZero = 0; // QAtomicInt operates on int
-        QRandomGenerator random = QRandomGenerator::securelySeeded();
-
-        for (int i = m_startIndex; i < m_endIndex; ++i) {
-            if ((*m_data)[i] > 0) {
-                if (random.bounded(2) == 0) { // 50% chance
-                    (*m_data)[i]--;
-                }
-                if ((*m_data)[i] > 0) {
-                    currentNonZero++;
-                }
-            }
-        }
-        m_chunkNonZeroCount->store(currentNonZero); // Use QAtomicInt API
-    }
-};
-
-class DecrementProcessor {
-private:
-    std::vector<int>* m_data;
-    QThreadPool* m_pool;
-    int m_vectorSize;
-    QVector<QAtomicInt> m_chunkNonZeroCounts; // Changed to QVector<QAtomicInt>
-
-public:
-    DecrementProcessor(std::vector<int>* data, QThreadPool* pool, int vectorSize)
-        : m_data(data), m_pool(pool), m_vectorSize(vectorSize) {}
-
-    void populateVector(int maxValue) {
-        appendToOutput(QString("Populating vector of size %1 with random values up to %2 for decrement task...").arg(m_vectorSize).arg(maxValue));
-        int numThreads = m_pool->maxThreadCount();
-        if (numThreads == 0) { appendToOutput("Error: Thread pool has 0 threads for population."); return; }
-        int chunkSize = (m_vectorSize > 0 && numThreads > 0) ? std::max(1, m_vectorSize / numThreads) : 1;
-
-        for (int i = 0; i < numThreads; ++i) {
-            int start = i * chunkSize;
-            int end = (i == numThreads - 1) ? m_vectorSize : (i + 1) * chunkSize;
-            if (start >= m_vectorSize) break;
-            end = std::min(end, m_vectorSize);
-            if (start >= end) continue;
-
-            PopulateDecrementVectorTask* task = new PopulateDecrementVectorTask(m_data, start, end, maxValue);
-            m_pool->start(task);
-        }
-        while (!m_pool->waitForDone(100)) { QApplication::processEvents(); }
-        appendToOutput("Decrement vector population complete.");
-    }
-
-    qint64 decrementToZero() {
-        appendToOutput("Starting decrement process...");
-        QElapsedTimer timer;
-        timer.start();
-
-        int numThreads = m_pool->maxThreadCount();
-        if (numThreads == 0) {
-            appendToOutput("Error: Thread pool has 0 threads for decrementing.");
-            return -1;
-        }
-
-        m_chunkNonZeroCounts.clear();
-        // This resize call should default-construct 'numThreads' QAtomicInt objects.
-        // Default construction for QAtomicInt initializes it to zero.
-        m_chunkNonZeroCounts.resize(numThreads);
-
-
-        int passCount = 0;
-        while (true) {
-            passCount++;
-            long long totalNonZeroElementsInPass = 0; // Sum can be larger than int
-            int chunkSize = (m_vectorSize > 0 && numThreads > 0) ? std::max(1, m_vectorSize / numThreads) : 1;
-
-            for (int i = 0; i < numThreads; ++i) {
-                int start = i * chunkSize;
-                int end = (i == numThreads - 1) ? m_vectorSize : (i + 1) * chunkSize;
-                if (start >= m_vectorSize) break;
-                end = std::min(end, m_vectorSize);
-                if (start >= end) continue;
-
-                if (i < m_chunkNonZeroCounts.size()) { // QVector uses int for size and index
-                    DecrementChunkTask* task = new DecrementChunkTask(m_data, start, end, &m_chunkNonZeroCounts[i]);
-                    m_pool->start(task);
-                } else {
-                     appendToOutput(QString("Error: Task index %1 out of bounds for m_chunkNonZeroCounts (size %2). Skipping task.")
-                               .arg(i).arg(m_chunkNonZeroCounts.size()));
-                }
-            }
-
-            while (!m_pool->waitForDone(100)) { QApplication::processEvents(); }
-
-            for (int i = 0; i < numThreads; ++i) {
-                 int start = i * chunkSize;
-                 if (start >= m_vectorSize) break;
-
-                if (i < m_chunkNonZeroCounts.size()) {
-                   totalNonZeroElementsInPass += m_chunkNonZeroCounts[i].load(); // Use QAtomicInt API
-                }
-            }
-
-            appendToOutput(QString("Decrement Pass %1: %2 elements remaining > 0.").arg(passCount).arg(totalNonZeroElementsInPass));
-
-            if (totalNonZeroElementsInPass == 0) {
-                break;
-            }
-            QApplication::processEvents();
-        }
-
-        qint64 elapsed = timer.elapsed();
-        appendToOutput(QString("Decrement process complete. All elements are zero. Took %1 passes.").arg(passCount));
-        return elapsed;
-    }
-};
-
+void CustomGraphicsView::resizeEvent(QResizeEvent *event) {
+    QGraphicsView::resizeEvent(event);
+}
 
 // === MainWindow Implementation ===
-MainWindow::MainWindow(QWidget* parent) : QWidget(parent) {
-    setWindowTitle("Parallel Tasks Demo");
-    setFixedSize(800, 700);
+MainWindow::MainWindow(QWidget* parent)
+    : QWidget(parent)
+    , mDebugOutputEnabled(true)
+    , mSimulationRunning(false)
+    , mCurrentCreatureIndex(0)
+    , mMetronomeRotation(0)
+    , mMetronomeEnabled(true)
+{
+    setWindowTitle("2dsim08 + 2dsim07 Integration - Multithreaded Creature Simulation");
+    setMinimumSize(1000, 700);
     g_mainWindow = this;
 
-    m_sharedThreadPool = new QThreadPool(this);
+    // Setup thread pool (from 2dsim08)
+    m_threadPool = new QThreadPool(this);
     int totalCores = QThread::idealThreadCount();
     int usableCores = std::max(1, totalCores > 1 ? totalCores - 1 : 1);
-    m_sharedThreadPool->setMaxThreadCount(usableCores);
+    m_threadPool->setMaxThreadCount(usableCores);
 
-    QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    statusLabel = new QLabel("Select a task to begin.");
-    statusLabel->setWordWrap(true);
+    setupGUI();
+    setupGraphics();
+    setupTerrain();
+    setupCreatures();
+    setupEventLoop();
 
-    QHBoxLayout* buttonLayout = new QHBoxLayout();
-    startButton = new QPushButton("Start Number Sort (Task 1)");
-    startStringMatrixButton = new QPushButton("Start String Matrix (Task 2)");
-    startDecrementButton = new QPushButton("Start Decrement Task (Task 3)");
-    clearButton = new QPushButton("Clear Output");
-
-    buttonLayout->addWidget(startButton);
-    buttonLayout->addWidget(startStringMatrixButton);
-    buttonLayout->addWidget(startDecrementButton);
-    buttonLayout->addStretch();
-    buttonLayout->addWidget(clearButton);
-
-    outputText = new QTextEdit();
-    outputText->setReadOnly(true);
-    outputText->setFont(QFont("Courier", 9));
-
-    mainLayout->addWidget(statusLabel);
-    mainLayout->addLayout(buttonLayout);
-    mainLayout->addWidget(outputText, 1);
-
-    connect(startButton, &QPushButton::clicked, this, &MainWindow::runSortingDemo);
-    connect(startStringMatrixButton, &QPushButton::clicked, this, &MainWindow::runStringMatrixTask);
-    connect(startDecrementButton, &QPushButton::clicked, this, &MainWindow::runDecrementTask);
-    connect(clearButton, &QPushButton::clicked, this, &MainWindow::clearOutput);
-
-    appendToOutput(QString("GUI Application started. Shared thread pool configured with %1 max threads.").arg(usableCores));
-    appendToOutput(QString("System has %1 ideal cores.").arg(totalCores));
+    appendOutput(QString("=== INTEGRATED SIMULATION INITIALIZED ==="));
+    appendOutput(QString("Thread pool: %1 cores (of %2 total)").arg(usableCores).arg(totalCores));
+    appendOutput(QString("Creatures: %1, Terrain: %2x%3").arg(STARTING_CREATURE_COUNT).arg(NUM_TERRAIN_COLS).arg(NUM_TERRAIN_ROWS));
+    appendOutput(QString("World size: %1x%2").arg(WORLD_SCENE_WIDTH).arg(WORLD_SCENE_HEIGHT));
+    appendOutput("Use mouse wheel to zoom, WASD to pan. Click Start to begin!");
 }
 
 MainWindow::~MainWindow() {
     g_mainWindow = nullptr;
+
+    // Clean up creatures
+    for (auto* creature : mCreatures) {
+        if (creature) {
+            delete creature->graphicsItem;
+            delete creature;
+        }
+    }
+
+    // Clean up terrain
+    for (auto& row : mTerrain2D) {
+        for (auto* terrain : row) {
+            if (terrain) {
+                delete terrain->graphicsItem;
+                delete terrain;
+            }
+        }
+    }
 }
 
 void MainWindow::appendOutput(const QString& text) {
+    // Always allow direct calls to appendOutput (for important messages)
     QMetaObject::invokeMethod(this, [this, text]() {
         outputText->append(text);
         outputText->ensureCursorVisible();
     }, Qt::QueuedConnection);
 }
 
+void MainWindow::setupGUI() {
+    QVBoxLayout* mainLayout = new QVBoxLayout(this);
+
+    statusLabel = new QLabel("Integrated Simulation Ready. Click Start to begin creature movement!");
+    statusLabel->setWordWrap(true);
+    statusLabel->setStyleSheet("QLabel { background-color: lightblue; padding: 5px; }");
+
+    QHBoxLayout* buttonLayout = new QHBoxLayout();
+    startButton = new QPushButton("Start Simulation");
+    clearButton = new QPushButton("Clear Output");
+    debugToggleButton = new QPushButton("Debug: ON");
+
+    startButton->setStyleSheet("QPushButton { background-color: lightgreen; padding: 5px; }");
+    clearButton->setStyleSheet("QPushButton { background-color: lightyellow; padding: 5px; }");
+    debugToggleButton->setStyleSheet("QPushButton { background-color: lightcyan; padding: 5px; }");
+
+    buttonLayout->addWidget(startButton);
+    buttonLayout->addWidget(debugToggleButton);
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(clearButton);
+
+    outputText = new QTextEdit();
+    outputText->setReadOnly(true);
+    outputText->setFont(QFont("Courier", 8));
+    outputText->setMaximumHeight(120);
+    outputText->setStyleSheet("QTextEdit { background-color: black; color: lightgreen; }");
+
+    mainLayout->addWidget(statusLabel);
+    mainLayout->addLayout(buttonLayout);
+
+    connect(startButton, &QPushButton::clicked, this, &MainWindow::runSimulation);
+    connect(clearButton, &QPushButton::clicked, this, &MainWindow::clearOutput);
+    connect(debugToggleButton, &QPushButton::clicked, this, &MainWindow::toggleDebugOutput);
+}
+
+void MainWindow::setupGraphics() {
+    // Create main world scene (like 2dsim07)
+    mWorldScene = new QGraphicsScene(0, 0, WORLD_SCENE_WIDTH, WORLD_SCENE_HEIGHT);
+    mWorldView = new CustomGraphicsView(mWorldScene, this);
+
+    // Add graphics view to main layout
+    layout()->addWidget(mWorldView);
+    layout()->addWidget(outputText);
+
+    // Setup metronome visual indicator (from 2dsim07)
+    if (mMetronomeEnabled) {
+        int metronomeSize = WORLD_SCENE_WIDTH / 200;
+        mMetronome = new QGraphicsRectItem(20, 20, metronomeSize, metronomeSize);
+        QPen pen(Qt::black, 2);
+        mMetronome->setPen(pen);
+        mMetronome->setBrush(QBrush(Qt::red));
+        mMetronome->setZValue(100);
+        mMetronome->setTransformOriginPoint(metronomeSize/2.0, metronomeSize/2.0);
+        mWorldScene->addItem(mMetronome);
+        appendOutput("Metronome visual indicator created.");
+    }
+
+    // Fit view to scene after a short delay
+    QTimer::singleShot(200, [this]() {
+        mWorldView->fitInView(mWorldScene->sceneRect(), Qt::KeepAspectRatio);
+    });
+}
+
+void MainWindow::setupTerrain() {
+    appendOutput("Setting up terrain...");
+
+    // Initialize 2D terrain vector (like 2dsim07)
+    mTerrain2D.resize(NUM_TERRAIN_COLS);
+    for (int col = 0; col < NUM_TERRAIN_COLS; col++) {
+        mTerrain2D[col].resize(NUM_TERRAIN_ROWS);
+        for (int row = 0; row < NUM_TERRAIN_ROWS; row++) {
+            mTerrain2D[col][row] = createTerrain(col, row, TERRAIN_FOLIAGE);
+        }
+    }
+
+    // Add some random water and sand patches
+    for (int i = 0; i < 50; i++) {
+        int col = QRandomGenerator::global()->bounded(NUM_TERRAIN_COLS);
+        int row = QRandomGenerator::global()->bounded(NUM_TERRAIN_ROWS);
+        TerrainType type = (QRandomGenerator::global()->bounded(2) == 0) ? TERRAIN_WATER : TERRAIN_SAND;
+
+        SimpleTerrain* terrain = mTerrain2D[col][row];
+        terrain->type = type;
+        setTerrainColor(terrain);
+    }
+
+    appendOutput(QString("Terrain created: %1x%2 = %3 squares").arg(NUM_TERRAIN_COLS).arg(NUM_TERRAIN_ROWS).arg(NUM_TERRAIN_COLS * NUM_TERRAIN_ROWS));
+}
+
+void MainWindow::setupCreatures() {
+    appendOutput("Creating creatures...");
+
+    // Create creatures (like 2dsim07's addCreature)
+    for (int i = 0; i < STARTING_CREATURE_COUNT; i++) {
+        qreal x = QRandomGenerator::global()->bounded(WORLD_SCENE_WIDTH);
+        qreal y = QRandomGenerator::global()->bounded(WORLD_SCENE_HEIGHT);
+        SimpleCreature* creature = createCreature(x, y);
+        mCreatures.push_back(creature);
+    }
+
+    appendOutput(QString("Created %1 creatures").arg(mCreatures.size()));
+    printCreatureSample("Initial creature sample:");
+}
+
+void MainWindow::setupEventLoop() {
+    // Setup game loop timer (like 2dsim07)
+    connect(&mEventLoopTimer, &QTimer::timeout, this, &MainWindow::eventLoopTick);
+    mEventLoopTimer.setInterval(50); // 20 FPS
+    appendOutput("Event loop configured (50ms interval).");
+}
+
+void MainWindow::runSimulation() {
+    if (!mSimulationRunning) {
+        mSimulationRunning = true;
+        startButton->setText("Stop Simulation");
+        statusLabel->setText("Simulation RUNNING - creatures moving west to east, using parallel processing");
+        mEventLoopTimer.start();
+        appendOutput("=== SIMULATION STARTED ===");
+    } else {
+        mSimulationRunning = false;
+        startButton->setText("Start Simulation");
+        statusLabel->setText("Simulation STOPPED - click Start to resume");
+        mEventLoopTimer.stop();
+        appendOutput("=== SIMULATION STOPPED ===");
+    }
+}
+
 void MainWindow::clearOutput() {
     outputText->clear();
-    appendOutput("Output cleared. Ready for next demo!");
+    if (mDebugOutputEnabled) {
+        appendOutput("Output cleared. Ready for next run!");
+    }
 }
 
-void MainWindow::runSortingDemo() {
-    startButton->setEnabled(false);
-    startStringMatrixButton->setEnabled(false);
-    startDecrementButton->setEnabled(false);
-    statusLabel->setText("Task 1 (Number Sort) in progress... Watch output.");
-    appendOutput("\n" + QString("=").repeated(60));
-    appendOutput("STARTING TASK 1: PARALLEL NUMBER SORTING DEMO");
-    appendOutput(QString("=").repeated(60));
+void MainWindow::toggleDebugOutput() {
+    mDebugOutputEnabled = !mDebugOutputEnabled;
 
-    data.resize(VECTOR_SIZE);
-    appendToOutput(QString("Generating %1 random integers using shared pool...").arg(VECTOR_SIZE));
-
-    int numGenThreads = m_sharedThreadPool->maxThreadCount();
-    if (numGenThreads == 0) {
-        appendToOutput("Error: Cannot generate numbers, pool has 0 threads.");
-        startButton->setEnabled(true);
-        startStringMatrixButton->setEnabled(true);
-        startDecrementButton->setEnabled(true);
-        statusLabel->setText("Error: Thread pool unavailable. Select a task.");
-        return;
-    }
-    int genChunkSize = (VECTOR_SIZE > 0 && numGenThreads > 0) ? std::max(1, VECTOR_SIZE / numGenThreads) : 1;
-
-    for (int i = 0; i < numGenThreads; i++) {
-        int start = i * genChunkSize;
-        int end = (i == numGenThreads - 1) ? VECTOR_SIZE : (i + 1) * genChunkSize;
-        if (start >= VECTOR_SIZE) break;
-        end = std::min(end, (int)VECTOR_SIZE);
-        if (start >= end) continue;
-        RandomGenTask* genTask = new RandomGenTask(&data, start, end);
-        m_sharedThreadPool->start(genTask);
-    }
-    while (!m_sharedThreadPool->waitForDone(100)) { QApplication::processEvents(); }
-
-    printSample(data, "\nOriginal vector (unsorted):");
-
-    QElapsedTimer timer;
-    timer.start();
-
-    ParallelSorter sorter(&data, m_sharedThreadPool);
-    sorter.parallelSort();
-
-    qint64 parallelTime = timer.elapsed();
-    bool sorted = isSorted(data);
-    appendOutput(QString("\nVector is sorted: %1").arg(sorted ? "true" : "false"));
-    printSample(data, "\nSorted vector:");
-    appendOutput(QString("\nParallel sort took: %1 ms").arg(parallelTime));
-
-    appendOutput("\nNow testing single-threaded sort for comparison...");
-    appendOutput("Regenerating random data using shared pool...");
-
-    for (int i = 0; i < numGenThreads; i++) {
-        int start = i * genChunkSize;
-        int end = (i == numGenThreads - 1) ? VECTOR_SIZE : (i + 1) * genChunkSize;
-        if (start >= VECTOR_SIZE) break;
-        end = std::min(end, (int)VECTOR_SIZE);
-        if (start >= end) continue;
-        RandomGenTask* genTask = new RandomGenTask(&data, start, end);
-        m_sharedThreadPool->start(genTask);
-    }
-    while (!m_sharedThreadPool->waitForDone(100)) { QApplication::processEvents(); }
-
-    timer.restart();
-    std::sort(data.begin(), data.end());
-    qint64 singleThreadTime = timer.elapsed();
-    appendOutput(QString("Single-threaded sort took: %1 ms").arg(singleThreadTime));
-
-    if (parallelTime > 0) {
-        double speedup = (double)singleThreadTime / parallelTime;
-        appendOutput(QString("Speedup: %1x").arg(speedup, 0, 'f', 2));
+    if (mDebugOutputEnabled) {
+        debugToggleButton->setText("Debug: ON");
+        debugToggleButton->setStyleSheet("QPushButton { background-color: lightcyan; padding: 5px; }");
+        appendOutput("=== DEBUG OUTPUT ENABLED ===");
+        appendOutput("Thread activity messages will be shown.");
     } else {
-        appendOutput("Speedup: N/A (Parallel time was zero or negative)");
+        debugToggleButton->setText("Debug: OFF");
+        debugToggleButton->setStyleSheet("QPushButton { background-color: lightgray; padding: 5px; }");
+        // This message will show because we haven't disabled output yet
+        appendOutput("=== DEBUG OUTPUT DISABLED ===");
+        appendOutput("Thread activity messages are now hidden. Simulation continues silently.");
     }
-
-    appendOutput(QString("=").repeated(60));
-    appendOutput("TASK 1 (NUMBER SORT) COMPLETE");
-    appendOutput(QString("=").repeated(60) + "\n");
-
-    statusLabel->setText("Task 1 complete! Select a task to begin.");
-    startButton->setEnabled(true);
-    startStringMatrixButton->setEnabled(true);
-    startDecrementButton->setEnabled(true);
 }
 
-void MainWindow::printStringMatrixSample(const QString& label) {
-    appendToOutput(label);
-    if (stringData.empty()) {
-        appendToOutput("String matrix is empty.");
-        return;
+void MainWindow::eventLoopTick() {
+    if (!mSimulationRunning) return;
+
+    // Update metronome (visual indicator)
+    if (mMetronomeEnabled) {
+        moveMetronome();
     }
 
-    for (int i = 0; i < std::min((int)stringData.size(), 3); ++i) {
-        QString rowStr = QString("Row %1 (first 5 elements): ").arg(i);
-        if (stringData[i].empty()) {
-            rowStr += "[empty]";
-        } else {
-            for (int j = 0; j < std::min((int)stringData[i].size(), 5); ++j) {
-                rowStr += stringData[i][j];
-                if (j < std::min((int)stringData[i].size(), 5) - 1) rowStr += ", ";
+    // Update creatures using parallel processing (like 2dsim08)
+    updateCreaturesParallel();
+
+    // Update graphics in main thread
+    updateGraphics();
+}
+
+void MainWindow::updateCreaturesParallel() {
+    if (mCreatures.empty()) return;
+
+    int numThreads = m_threadPool->maxThreadCount();
+    int chunkSize = qMax(1, mCreatures.size() / numThreads);
+
+    // Create tasks for parallel processing (like 2dsim08)
+    for (int i = 0; i < numThreads; i++) {
+        int start = i * chunkSize;
+        int end = (i == numThreads - 1) ? mCreatures.size() : (i + 1) * chunkSize;
+        if (start >= mCreatures.size()) break;
+
+        CreatureUpdateTask* task = new CreatureUpdateTask(&mCreatures, start, end, i);
+        m_threadPool->start(task);
+    }
+
+    // Wait for all tasks to complete
+    while (!m_threadPool->waitForDone(1)) {
+        QApplication::processEvents();
+    }
+}
+
+void MainWindow::updateGraphics() {
+    // Update creature graphics in main thread (thread-safe)
+    int updated = 0;
+    for (int i = mCurrentCreatureIndex; i < mCurrentCreatureIndex + CREATURES_UPDATED_PER_TICK && i < mCreatures.size(); i++) {
+        SimpleCreature* creature = mCreatures[i];
+        if (creature && creature->exists) {
+            // Update position
+            creature->posX = creature->newX;
+            creature->posY = creature->newY;
+            creature->graphicsItem->setPos(creature->posX, creature->posY);
+
+            // Update color
+            creature->graphicsItem->setBrush(QBrush(creature->color));
+
+            // Check for water collision (like 2dsim07)
+            TerrainType terrainType = findTerrainTypeByXY(creature->posX, creature->posY);
+            if (terrainType == TERRAIN_WATER) {
+                creature->newX = QRandomGenerator::global()->bounded(WORLD_SCENE_WIDTH);
+                creature->newY = QRandomGenerator::global()->bounded(WORLD_SCENE_HEIGHT);
             }
+
+            updated++;
         }
-        appendToOutput(rowStr);
+    }
+
+    mCurrentCreatureIndex += CREATURES_UPDATED_PER_TICK;
+    if (mCurrentCreatureIndex >= mCreatures.size()) {
+        mCurrentCreatureIndex = 0;
+    }
+
+    // Advance scene
+    mWorldScene->advance();
+}
+
+void MainWindow::moveMetronome() {
+    if (!mMetronome) return;
+
+    // Move metronome around (like 2dsim07)
+    qreal dx = WORLD_SCENE_WIDTH * 0.002;
+    qreal dy = WORLD_SCENE_HEIGHT * -0.001;
+    qreal newX = mMetronome->x() + dx;
+    qreal newY = mMetronome->y() + dy;
+
+    if (newX < 0) newX = WORLD_SCENE_WIDTH - 100;
+    else if (newX > WORLD_SCENE_WIDTH) newX = 100;
+    if (newY < 0) newY = WORLD_SCENE_HEIGHT - 100;
+    else if (newY > WORLD_SCENE_HEIGHT) newY = 100;
+
+    mMetronomeRotation += 3;
+    if (mMetronomeRotation > 360) mMetronomeRotation -= 360;
+
+    mMetronome->setRotation(mMetronomeRotation);
+    mMetronome->setPos(newX, newY);
+
+    // Randomly change color
+    if (QRandomGenerator::global()->bounded(100) > 95) {
+        QColor newColor = getRandomColor();
+        mMetronome->setBrush(QBrush(newColor));
     }
 }
 
-void MainWindow::runStringMatrixTask() {
-    startButton->setEnabled(false);
-    startStringMatrixButton->setEnabled(false);
-    startDecrementButton->setEnabled(false);
-    statusLabel->setText("Task 2 (String Matrix) in progress... Watch output.");
-    appendOutput("\n" + QString("=").repeated(60));
-    appendOutput("STARTING TASK 2: STRING MATRIX POPULATION AND SORT");
-    appendOutput(QString("=").repeated(60));
+// === Creature Methods ===
+SimpleCreature* MainWindow::createCreature(qreal x, qreal y) {
+    SimpleCreature* creature = new SimpleCreature;
 
-    stringData.assign(STRING_MATRIX_ROWS, std::vector<QString>());
+    // Initialize creature data (like 2dsim07)
+    creature->posX = x;
+    creature->posY = y;
+    creature->newX = x;
+    creature->newY = y;
+    creature->speed = 50 + QRandomGenerator::global()->bounded(100); // Random speed
+    creature->size = DEFAULT_CREATURE_SIZE + QRandomGenerator::global()->bounded(50);
+    creature->health = 100.0;
+    creature->color = getRandomColor();
+    creature->state = STATE_MOVING;
+    creature->exists = true;
+    creature->uniqueID = getUniqueID();
 
-    StringMatrixProcessor processor(&stringData, m_sharedThreadPool, STRING_MATRIX_ROWS, STRING_MATRIX_COLS, STRING_LENGTH);
+    // Create graphics (like 2dsim07)
+    creature->graphicsItem = new QGraphicsEllipseItem(0, 0, creature->size, creature->size);
+    creature->graphicsItem->setPos(x, y);
+    creature->graphicsItem->setBrush(QBrush(creature->color));
+    creature->graphicsItem->setPen(QPen(Qt::transparent));
+    creature->graphicsItem->setZValue(10);
 
-    QElapsedTimer timer;
-    timer.start();
+    mWorldScene->addItem(creature->graphicsItem);
 
-    processor.populate();
-    qint64 populateTime = timer.elapsed();
-    appendToOutput(QString("String matrix population took: %1 ms").arg(populateTime));
-    printStringMatrixSample("\nSample of populated string matrix (before sort):");
-
-    timer.restart();
-    processor.sortRows();
-    qint64 sortTime = timer.elapsed();
-    appendToOutput(QString("String matrix row sorting took: %1 ms").arg(sortTime));
-    printStringMatrixSample("\nSample of sorted string matrix:");
-
-    qint64 totalTime = populateTime + sortTime;
-    appendToOutput(QString("\nTotal time for Task 2: %1 ms").arg(totalTime));
-
-    appendOutput(QString("=").repeated(60));
-    appendOutput("TASK 2 (STRING MATRIX) COMPLETE");
-    appendOutput(QString("=").repeated(60) + "\n");
-
-    statusLabel->setText("Task 2 complete! Select a task to begin.");
-    startButton->setEnabled(true);
-    startStringMatrixButton->setEnabled(true);
-    startDecrementButton->setEnabled(true);
+    return creature;
 }
 
-bool MainWindow::verifyAllZero(const std::vector<int>& vec) {
-    for (int val : vec) {
-        if (val != 0) return false;
-    }
-    return true;
+// === Terrain Methods ===
+SimpleTerrain* MainWindow::createTerrain(int col, int row, TerrainType type) {
+    SimpleTerrain* terrain = new SimpleTerrain;
+
+    terrain->type = type;
+    terrain->density = 1;
+    terrain->initialized = true;
+
+    // Create graphics
+    qreal x = col * TERRAIN_SIZE;
+    qreal y = row * TERRAIN_SIZE;
+    terrain->graphicsItem = new QGraphicsRectItem(x, y, TERRAIN_SIZE, TERRAIN_SIZE);
+    terrain->graphicsItem->setZValue(0);
+
+    setTerrainColor(terrain);
+    mWorldScene->addItem(terrain->graphicsItem);
+
+    return terrain;
 }
 
-void MainWindow::runDecrementTask() {
-    startButton->setEnabled(false);
-    startStringMatrixButton->setEnabled(false);
-    startDecrementButton->setEnabled(false);
-    statusLabel->setText("Task 3 (Decrement Vector) in progress... Watch output.");
-    appendOutput("\n" + QString("=").repeated(60));
-    appendOutput("STARTING TASK 3: DECREMENT VECTOR ELEMENTS TO ZERO");
-    appendOutput(QString("=").repeated(60));
+void MainWindow::setTerrainColor(SimpleTerrain* terrain) {
+    if (!terrain) return;
 
-    data.assign(DECREMENT_VECTOR_SIZE, 0);
-
-    DecrementProcessor processor(&data, m_sharedThreadPool, DECREMENT_VECTOR_SIZE);
-
-    processor.populateVector(MAX_RANDOM_VALUE_DECREMENT);
-    printSample(data, "\nInitial vector for decrement task (first/last 10 elements):");
-
-    qint64 decrementTime = processor.decrementToZero();
-
-    if (decrementTime >= 0) {
-        appendToOutput(QString("\nTotal time for decrement phase: %1 ms").arg(decrementTime));
-        bool allZero = verifyAllZero(data);
-        appendToOutput(QString("Verification: All elements are zero = %1").arg(allZero ? "true" : "false"));
-        if (!allZero) {
-             printSample(data, "\nSample of vector after decrement (if not all zero):");
-        }
-    } else {
-        appendToOutput("\nDecrement task failed or was interrupted.");
+    switch (terrain->type) {
+        case TERRAIN_FOLIAGE:
+            terrain->color = QColor(180, 230, 180); // Light green
+            break;
+        case TERRAIN_SAND:
+            terrain->color = QColor(180, 153, 102); // Sandy brown
+            break;
+        case TERRAIN_WATER:
+            terrain->color = QColor(51, 153, 255);  // Blue
+            break;
+        default:
+            terrain->color = QColor(100, 100, 100); // Gray
+            break;
     }
 
-    appendOutput(QString("=").repeated(60));
-    appendOutput("TASK 3 (DECREMENT VECTOR) COMPLETE");
-    appendOutput(QString("=").repeated(60) + "\n");
+    terrain->graphicsItem->setBrush(QBrush(terrain->color));
+    terrain->graphicsItem->setPen(QPen(Qt::transparent));
+}
 
-    statusLabel->setText("Task 3 complete! Select a task to begin.");
-    startButton->setEnabled(true);
-    startStringMatrixButton->setEnabled(true);
-    startDecrementButton->setEnabled(true);
+TerrainType MainWindow::findTerrainTypeByXY(qreal x, qreal y) {
+    int col = static_cast<int>(x / TERRAIN_SIZE);
+    int row = static_cast<int>(y / TERRAIN_SIZE);
+
+    if (col < 0 || col >= NUM_TERRAIN_COLS || row < 0 || row >= NUM_TERRAIN_ROWS) {
+        return TERRAIN_FOLIAGE; // Default
+    }
+
+    return mTerrain2D[col][row]->type;
+}
+
+// === Utility Methods ===
+void MainWindow::printCreatureSample(const QString& label) {
+    appendOutput(label);
+    int sampleSize = qMin(5, mCreatures.size());
+    for (int i = 0; i < sampleSize; i++) {
+        SimpleCreature* creature = mCreatures[i];
+        appendOutput(QString("  Creature %1: pos(%2,%3) speed=%4 color=rgb(%5,%6,%7)")
+                    .arg(creature->uniqueID)
+                    .arg(creature->posX, 0, 'f', 1)
+                    .arg(creature->posY, 0, 'f', 1)
+                    .arg(creature->speed, 0, 'f', 1)
+                    .arg(creature->color.red())
+                    .arg(creature->color.green())
+                    .arg(creature->color.blue()));
+    }
+}
+
+bool MainWindow::isValidCoordinate(qreal x, qreal y) {
+    return x >= 0 && x < WORLD_SCENE_WIDTH && y >= 0 && y < WORLD_SCENE_HEIGHT;
+}
+
+QColor MainWindow::getRandomColor() {
+    int r = QRandomGenerator::global()->bounded(256);
+    int g = QRandomGenerator::global()->bounded(256);
+    int b = QRandomGenerator::global()->bounded(256);
+    return QColor(r, g, b);
+}
+
+int MainWindow::getUniqueID() {
+    static int nextID = 1;
+    return nextID++;
 }
