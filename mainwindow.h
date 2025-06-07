@@ -1,3 +1,4 @@
+// 2dsim08/mainwindow.h V57
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
@@ -31,20 +32,40 @@ enum TerrainType {
 };
 
 enum CreatureState {
-    STATE_MOVING,
-    STATE_RESTING,
-    STATE_EATING
+    STATE_SEEKING_HERD,      // Looking for another creature to herd with
+    STATE_MOVING_TO_HERD,    // Moving toward herd target
+    STATE_FINDING_SPACE,     // Trying to find elbow room (avoiding overlap)
+    STATE_RESTING,           // Socially satisfied, resting
+    STATE_ALPHA_TRAVELING,   // Alpha moving to chosen destination
+    STATE_ALPHA_RESTING      // Alpha resting at destination
 };
 
-// === Simple Structs (like 2dsim07 style) ===
+// === Simple Structs (herding behavior with alphas) ===
 struct SimpleCreature {
+    // Position and movement
     qreal posX;
     qreal posY;
     qreal newX;
     qreal newY;
     qreal speed;
+    qreal originalSpeed;
     qreal size;
-    qreal health;
+
+    // Alpha system (Scheme 3)
+    bool isAlpha;
+    SimpleCreature* myAlpha;         // Which alpha do I follow?
+    qreal alphaTargetX;              // For alphas: destination X
+    qreal alphaTargetY;              // For alphas: destination Y
+    int alphaRestingTime;            // For alphas: how long to rest at destination
+
+    // Herding system (within herd only now)
+    SimpleCreature* herdTarget;
+    bool hasHerdTarget;
+    int restingTimeLeft;
+    qreal herdingRange;      // How close to get to herd target
+    qreal elbowRoomRange;    // Personal space distance
+
+    // Graphics and state
     QGraphicsEllipseItem* graphicsItem;
     QColor color;
     CreatureState state;
@@ -108,9 +129,10 @@ public:
     static const int NUM_TERRAIN_COLS = 100;
     static const int NUM_TERRAIN_ROWS = 56;
     static const int TERRAIN_SIZE = WORLD_SCENE_WIDTH / 100;
-    static const int STARTING_CREATURE_COUNT = 50000;  // Let's start high and see what happens!
+    static const int STARTING_CREATURE_COUNT = 2000;  // Good number for multiple herds
+    static const int ALPHA_RATIO = 25;                // 1 alpha per 25 creatures
     static const int DEFAULT_CREATURE_SIZE = 200;
-    static const int CREATURES_UPDATED_PER_TICK = 2000;  // More creatures per graphics update
+    static const int CREATURES_UPDATED_PER_TICK = 1000;
 
 private slots:
     void runSimulation();
@@ -139,7 +161,7 @@ private:
     bool mSimulationRunning;
     int mCurrentCreatureIndex;
 
-    // === Game Data (Qt containers like 2dsim07) ===
+    // === Game Data (Qt containers) ===
     QVector<SimpleCreature*> mCreatures;
     QVector<QVector<SimpleTerrain*>> mTerrain2D;
 
@@ -162,9 +184,10 @@ private:
 
     // === Creature Methods ===
     SimpleCreature* createCreature(qreal x, qreal y);
-    void updateCreaturePosition(SimpleCreature* creature);
-    void updateCreatureColor(SimpleCreature* creature);
-    void deleteCreature(SimpleCreature* creature);
+    void findHerdTarget(SimpleCreature* creature);
+    void assignCreatureToNearestAlpha(SimpleCreature* creature);
+    void updateAlphaBehavior(SimpleCreature* alpha);
+    qreal distanceBetween(qreal x1, qreal y1, qreal x2, qreal y2);
 
     // === Terrain Methods ===
     SimpleTerrain* createTerrain(int col, int row, TerrainType type);

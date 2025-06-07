@@ -1,3 +1,4 @@
+// 2dsim08/mainwindow.cpp V64
 #include "mainwindow.h"
 #include <QApplication>
 #include <QFont>
@@ -44,26 +45,70 @@ public:
                           .arg(mEndIndex);
         appendToOutput(startMsg);
 
-        // Process creatures in this chunk (west to east movement like 2dsim07)
+        // Process creatures - HERDING BEHAVIOR
         for (int i = mStartIndex; i < mEndIndex && i < mCreatures->size(); i++) {
             SimpleCreature* creature = (*mCreatures)[i];
             if (creature && creature->exists) {
-                // Move west to east
-                creature->newX = creature->posX + creature->speed;
 
-                // Wrap around at world edge or reset randomly (like 2dsim07)
-                if (creature->newX > MainWindow::WORLD_SCENE_WIDTH) {
-                    creature->newX = 0;
-                    creature->newY = QRandomGenerator::global()->bounded(MainWindow::WORLD_SCENE_HEIGHT);
+                // === HERDING STATE MACHINE ===
+                switch (creature->state) {
+                    case STATE_SEEKING_HERD:
+                        // Look for another creature to herd with (will be handled in main thread)
+                        break;
+
+                    case STATE_MOVING_TO_HERD:
+                        if (creature->herdTarget) {
+                            // Calculate direction to herd target
+                            qreal dx = creature->herdTarget->posX - creature->posX;
+                            qreal dy = creature->herdTarget->posY - creature->posY;
+                            qreal distance = sqrt(dx * dx + dy * dy);
+
+                            if (distance > 1.0) {
+                                // Move toward herd target
+                                qreal moveX = (dx / distance) * creature->speed;
+                                qreal moveY = (dy / distance) * creature->speed;
+                                creature->newX = creature->posX + moveX;
+                                creature->newY = creature->posY + moveY;
+
+                                // Check if close enough to herd
+                                if (distance <= creature->herdingRange) {
+                                    creature->state = STATE_FINDING_SPACE;
+                                }
+                            }
+                        } else {
+                            creature->state = STATE_SEEKING_HERD;
+                        }
+                        break;
+
+                    case STATE_FINDING_SPACE:
+                        // Move away from overlapping creatures (simple avoidance)
+                        creature->newX = creature->posX + (QRandomGenerator::global()->bounded(21) - 10); // -10 to +10
+                        creature->newY = creature->posY + (QRandomGenerator::global()->bounded(21) - 10);
+
+                        // After moving, check if we can rest
+                        creature->state = STATE_RESTING;
+                        creature->restingTimeLeft = 100 + QRandomGenerator::global()->bounded(200); // 100-300 ticks
+                        break;
+
+                    case STATE_RESTING:
+                        // Stay put and count down resting time
+                        creature->newX = creature->posX;
+                        creature->newY = creature->posY;
+                        creature->restingTimeLeft--;
+
+                        if (creature->restingTimeLeft <= 0) {
+                            creature->state = STATE_SEEKING_HERD;
+                            creature->herdTarget = nullptr;
+                            creature->hasHerdTarget = false;
+                        }
+                        break;
                 }
 
-                // Update color randomly (like 2dsim07's tickCreatureAppearance)
-                if (QRandomGenerator::global()->bounded(100) < 5) { // 5% chance
-                    int r = QRandomGenerator::global()->bounded(256);
-                    int g = QRandomGenerator::global()->bounded(256);
-                    int b = QRandomGenerator::global()->bounded(256);
-                    creature->color = QColor(r, g, b);
-                }
+                // Keep creatures in bounds
+                if (creature->newX < 0) creature->newX = 0;
+                if (creature->newX > MainWindow::WORLD_SCENE_WIDTH) creature->newX = MainWindow::WORLD_SCENE_WIDTH;
+                if (creature->newY < 0) creature->newY = 0;
+                if (creature->newY > MainWindow::WORLD_SCENE_HEIGHT) creature->newY = MainWindow::WORLD_SCENE_HEIGHT;
             }
         }
 
@@ -205,11 +250,14 @@ MainWindow::MainWindow(QWidget* parent)
     setupCreatures();
     setupEventLoop();
 
-    appendOutput(QString("=== INTEGRATED SIMULATION INITIALIZED ==="));
+    appendOutput(QString("=== HERDING SIMULATION INITIALIZED ==="));
     appendOutput(QString("Thread pool: %1 cores (of %2 total)").arg(usableCores).arg(totalCores));
     appendOutput(QString("Creatures: %1, Terrain: %2x%3").arg(STARTING_CREATURE_COUNT).arg(NUM_TERRAIN_COLS).arg(NUM_TERRAIN_ROWS));
     appendOutput(QString("World size: %1x%2").arg(WORLD_SCENE_WIDTH).arg(WORLD_SCENE_HEIGHT));
     appendOutput("Use mouse wheel to zoom, WASD to pan. Click Start to begin!");
+    appendOutput("=== NEW: Alpha-Led Multi-Herd System Active! ===");
+    appendOutput("Dark red = alpha leaders, brown = herd members");
+    appendOutput("Alphas wander to random destinations, herd members follow within their herd");
 }
 
 MainWindow::~MainWindow() {
@@ -332,9 +380,9 @@ void MainWindow::setupTerrain() {
 }
 
 void MainWindow::setupCreatures() {
-    appendOutput("Creating creatures...");
+    appendOutput("Creating creatures with herding behavior...");
 
-    // Create creatures (like 2dsim07's addCreature)
+    // Create creatures
     for (int i = 0; i < STARTING_CREATURE_COUNT; i++) {
         qreal x = QRandomGenerator::global()->bounded(WORLD_SCENE_WIDTH);
         qreal y = QRandomGenerator::global()->bounded(WORLD_SCENE_HEIGHT);
@@ -342,7 +390,7 @@ void MainWindow::setupCreatures() {
         mCreatures.push_back(creature);
     }
 
-    appendOutput(QString("Created %1 creatures").arg(mCreatures.size()));
+    appendOutput(QString("Created %1 brown creatures with herding AI").arg(mCreatures.size()));
     printCreatureSample("Initial creature sample:");
 }
 
@@ -401,7 +449,14 @@ void MainWindow::eventLoopTick() {
         moveMetronome();
     }
 
-    // Update creatures using parallel processing (like 2dsim08)
+    // Handle herding target selection in main thread (needs access to creature vector)
+    for (auto* creature : mCreatures) {
+        if (creature && creature->exists && creature->state == STATE_SEEKING_HERD) {
+            findHerdTarget(creature);
+        }
+    }
+
+    // Update creatures using parallel processing
     updateCreaturesParallel();
 
     // Update graphics in main thread
@@ -441,7 +496,7 @@ void MainWindow::updateGraphics() {
             creature->posY = creature->newY;
             creature->graphicsItem->setPos(creature->posX, creature->posY);
 
-            // Update color
+            // Update color based on hunger (DON'T override with random colors!)
             creature->graphicsItem->setBrush(QBrush(creature->color));
 
             // Check for water collision (like 2dsim07)
@@ -495,20 +550,29 @@ void MainWindow::moveMetronome() {
 SimpleCreature* MainWindow::createCreature(qreal x, qreal y) {
     SimpleCreature* creature = new SimpleCreature;
 
-    // Initialize creature data (like 2dsim07)
+    // Initialize creature data
     creature->posX = x;
     creature->posY = y;
     creature->newX = x;
     creature->newY = y;
-    creature->speed = 50 + QRandomGenerator::global()->bounded(100); // Random speed
+    creature->speed = 30 + QRandomGenerator::global()->bounded(40); // 30-70 speed
+    creature->originalSpeed = creature->speed;
     creature->size = DEFAULT_CREATURE_SIZE + QRandomGenerator::global()->bounded(50);
-    creature->health = 100.0;
-    creature->color = getRandomColor();
-    creature->state = STATE_MOVING;
+
+    // Herding system
+    creature->herdTarget = nullptr;
+    creature->hasHerdTarget = false;
+    creature->restingTimeLeft = 0;
+    creature->herdingRange = creature->size * 2.5;     // Get within 2.5 diameters
+    creature->elbowRoomRange = creature->size * 1.2;   // Personal space
+
+    // Start seeking a herd
+    creature->state = STATE_SEEKING_HERD;
+    creature->color = QColor(139, 69, 19);  // Saddle brown color
     creature->exists = true;
     creature->uniqueID = getUniqueID();
 
-    // Create graphics (like 2dsim07)
+    // Create graphics
     creature->graphicsItem = new QGraphicsEllipseItem(0, 0, creature->size, creature->size);
     creature->graphicsItem->setPos(x, y);
     creature->graphicsItem->setBrush(QBrush(creature->color));
@@ -518,6 +582,38 @@ SimpleCreature* MainWindow::createCreature(qreal x, qreal y) {
     mWorldScene->addItem(creature->graphicsItem);
 
     return creature;
+}
+
+void MainWindow::findHerdTarget(SimpleCreature* creature) {
+    if (!creature || creature->hasHerdTarget) return;
+
+    // Find a random creature to herd with
+    if (mCreatures.size() > 1) {
+        int attempts = 10;  // Don't search forever
+        while (attempts > 0) {
+            int randomIndex = QRandomGenerator::global()->bounded(mCreatures.size());
+            SimpleCreature* potential = mCreatures[randomIndex];
+
+            if (potential && potential != creature && potential->exists) {
+                // Check if target is not too far away (reasonable herding distance)
+                qreal distance = distanceBetween(creature->posX, creature->posY,
+                                               potential->posX, potential->posY);
+                if (distance < WORLD_SCENE_WIDTH * 0.3) {  // Within 30% of world width
+                    creature->herdTarget = potential;
+                    creature->hasHerdTarget = true;
+                    creature->state = STATE_MOVING_TO_HERD;
+                    break;
+                }
+            }
+            attempts--;
+        }
+    }
+}
+
+qreal MainWindow::distanceBetween(qreal x1, qreal y1, qreal x2, qreal y2) {
+    qreal dx = x2 - x1;
+    qreal dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
 }
 
 // === Terrain Methods ===
@@ -579,14 +675,21 @@ void MainWindow::printCreatureSample(const QString& label) {
     int sampleSize = qMin(5, mCreatures.size());
     for (int i = 0; i < sampleSize; i++) {
         SimpleCreature* creature = mCreatures[i];
-        appendOutput(QString("  Creature %1: pos(%2,%3) speed=%4 color=rgb(%5,%6,%7)")
+        QString stateStr;
+        switch(creature->state) {
+            case STATE_SEEKING_HERD: stateStr = "seeking"; break;
+            case STATE_MOVING_TO_HERD: stateStr = "moving"; break;
+            case STATE_FINDING_SPACE: stateStr = "spacing"; break;
+            case STATE_RESTING: stateStr = "resting"; break;
+            case STATE_ALPHA_TRAVELING: stateStr = "alpha_travel"; break;
+            case STATE_ALPHA_RESTING: stateStr = "alpha_rest"; break;
+        }
+        appendOutput(QString("  Creature %1: pos(%2,%3) speed=%4 state=%5")
                     .arg(creature->uniqueID)
                     .arg(creature->posX, 0, 'f', 1)
                     .arg(creature->posY, 0, 'f', 1)
                     .arg(creature->speed, 0, 'f', 1)
-                    .arg(creature->color.red())
-                    .arg(creature->color.green())
-                    .arg(creature->color.blue()));
+                    .arg(stateStr));
     }
 }
 
