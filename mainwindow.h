@@ -2,7 +2,7 @@
     static const int ALPHA_MIN_WANDER_DIST = 100;    // Min distance for alpha wandering spurts
     static const int ALPHA_MAX_WANDER_DIST = 500;    // Max distance for alpha wandering spurts
     static const int ALPHA_MIN_REST_DURATION = 800;  // Min ticks for alpha to rest (much longer to let herds form)
-    static const int ALPHA_MAX_REST_DURATION = 2000; // Max ticks for alpha to rest (40+// 2dsim08/mainwindow.h V202506071415 - Alpha-Led Multi-Herd System with Thick Ring Indicators
+    static const int ALPHA_MAX_REST_DURATION = 2000; // Max ticks for alpha to rest (40+// 2dsim08/mainwindow.h V202506070354 - Alpha-Led Multi-Herd System with Housekeeping
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
@@ -130,7 +130,11 @@ public:
     // Public member for global access
     bool mDebugOutputEnabled;
 
-    // === Constants ===
+    // === Housekeeping ===
+    static const int HOUSEKEEPING_INTERVAL = 250;
+    static const int HOUSEKEEPING_CREATURES_PER_INTERVAL = 100;
+
+    // === World ===
     static const int VECTOR_SIZE = 1000000;
     static const int USE_PCT_CORE = 95;  // Increased from 80 to 95
     static const int WORLD_SCENE_WIDTH = 100000;
@@ -195,6 +199,10 @@ private:
     int mMetronomeRotation;
     bool mMetronomeEnabled;
 
+    // === Housekeeping System ===
+    int mHousekeepingTickCounter;
+    int mHousekeepingCreatureIndex;
+
     // === Setup Methods ===
     void setupGUI();
     void setupGraphics();
@@ -206,6 +214,9 @@ private:
     void updateCreaturesParallel();
     void updateGraphics();
     void moveMetronome();
+
+    // === Housekeeping Methods ===
+    void runHousekeeping();
 
     // === Creature Methods ===
     SimpleCreature* createCreature(qreal x, qreal y, bool isAlpha = false);

@@ -1,4 +1,4 @@
-// 2dsim08/mainwindow.cpp V202506071415 - Alpha-Led Multi-Herd System with Thick Ring Indicators
+// 2dsim08/mainwindow.cpp V202506070700 - Alpha-Led Multi-Herd System with Housekeeping
 #include "mainwindow.h"
 #include <QApplication>
 #include <QFont>
@@ -131,16 +131,17 @@ public:
                             break;
 
                         case STATE_FINDING_SPACE:
-                            // Check for collisions with other creatures and move away from them
+                            // Check for collisions with other creatures IN SAME HERD and move away from them
                             {
                                 qreal avoidX = 0;
                                 qreal avoidY = 0;
                                 bool foundCollision = false;
+                                int collisionCount = 0;
 
-                                // Check against all other creatures (this is expensive but necessary)
+                                // Check against creatures in SAME HERD only (not all creatures)
                                 for (int j = 0; j < mCreatures->size(); j++) {
                                     SimpleCreature* other = (*mCreatures)[j];
-                                    if (other && other != creature && other->exists) {
+                                    if (other && other != creature && other->exists && other->myAlpha == creature->myAlpha) {
                                         qreal dx = other->posX - creature->posX;
                                         qreal dy = other->posY - creature->posY;
                                         qreal distance = sqrt(dx * dx + dy * dy);
@@ -151,19 +152,20 @@ public:
                                         if (distance < minDistance && distance > 0.1) {
                                             // Too close! Calculate avoidance vector
                                             foundCollision = true;
+                                            collisionCount++;
                                             qreal pushStrength = (minDistance - distance) / distance;
-                                            avoidX -= dx * pushStrength * 0.5; // Push away from other creature
-                                            avoidY -= dy * pushStrength * 0.5;
+                                            avoidX -= dx * pushStrength * 0.3; // Reduced push strength to prevent oscillation
+                                            avoidY -= dy * pushStrength * 0.3;
                                         }
                                     }
                                 }
 
-                                if (foundCollision) {
+                                if (foundCollision && collisionCount < 5) { // Prevent getting stuck with too many neighbors
                                     // Apply avoidance movement
                                     creature->newX = creature->posX + avoidX;
                                     creature->newY = creature->posY + avoidY;
                                 } else {
-                                    // No collisions, we can rest
+                                    // No collisions OR too many neighbors (give up and rest)
                                     creature->newX = creature->posX;
                                     creature->newY = creature->posY;
                                     creature->state = STATE_RESTING;
@@ -356,6 +358,8 @@ MainWindow::MainWindow(QWidget* parent)
     , mCurrentCreatureIndex(0)
     , mMetronomeRotation(0)
     , mMetronomeEnabled(true)
+    , mHousekeepingTickCounter(0)
+    , mHousekeepingCreatureIndex(0)
 {
     setWindowTitle("2dsim08 - Alpha-Led Multi-Herd System");
     setMinimumSize(1000, 700);
@@ -379,7 +383,7 @@ MainWindow::MainWindow(QWidget* parent)
     appendOutput(QString("Terrain: %1x%2, World size: %3x%4").arg(NUM_TERRAIN_COLS).arg(NUM_TERRAIN_ROWS).arg(WORLD_SCENE_WIDTH).arg(WORLD_SCENE_HEIGHT));
     appendOutput("Use mouse wheel to zoom, WASD to pan. Click Start to begin!");
     appendOutput("=== Each herd has its own unique color! ===");
-    appendOutput("Dark red alphas lead bright colored herds around the world");
+    appendOutput("Black ring alphas lead white ring herds around the world");
 }
 
 MainWindow::~MainWindow() {
@@ -527,7 +531,7 @@ void MainWindow::setupCreatures() {
         mCreatures.push_back(member);
     }
 
-    appendOutput(QString("Created %1 alphas (dark red) leading %2 total creatures").arg(numAlphas).arg(mCreatures.size()));
+    appendOutput(QString("Created %1 alphas (black rings) leading %2 total creatures").arg(numAlphas).arg(mCreatures.size()));
     appendOutput(QString("Each of %1 herds has its own unique color!").arg(numAlphas));
     printCreatureSample("Alpha and herd sample:");
 }
@@ -584,6 +588,13 @@ void MainWindow::eventLoopTick() {
     // Update metronome (visual indicator)
     if (mMetronomeEnabled) {
         moveMetronome();
+    }
+
+    // Run housekeeping periodically
+    mHousekeepingTickCounter++;
+    if (mHousekeepingTickCounter >= MainWindow::HOUSEKEEPING_INTERVAL) {
+        runHousekeeping();
+        mHousekeepingTickCounter = 0; // Reset counter
     }
 
     // Handle herding target selection in main thread (needs access to creature vector)
@@ -722,37 +733,33 @@ SimpleCreature* MainWindow::createCreature(qreal x, qreal y, bool isAlpha) {
     creature->wanderTargetX = 0;
     creature->wanderTargetY = 0;
 
+    creature->exists = true;
+    creature->uniqueID = getUniqueID();
+
     // Set initial state and color
     if (isAlpha) {
         creature->state = STATE_ALPHA_TRAVELING;
-        creature->color = QColor(139, 0, 0);  // Dark red for alphas
-        // Alphas get random destinations within reasonable range from their starting position
-        qreal wanderDistance = ALPHA_MIN_WANDER_DIST +
-            QRandomGenerator::global()->bounded(ALPHA_MAX_WANDER_DIST - ALPHA_MIN_WANDER_DIST);
-        qreal angle = QRandomGenerator::global()->bounded(360) * M_PI / 180.0; // Random angle in radians
-        creature->alphaTargetX = creature->posX + cos(angle) * wanderDistance;
-        creature->alphaTargetY = creature->posY + sin(angle) * wanderDistance;
-
-        // Keep alpha targets within world bounds
-        if (creature->alphaTargetX < 0) creature->alphaTargetX = wanderDistance;
-        if (creature->alphaTargetX > WORLD_SCENE_WIDTH) creature->alphaTargetX = WORLD_SCENE_WIDTH - wanderDistance;
-        if (creature->alphaTargetY < 0) creature->alphaTargetY = wanderDistance;
-        if (creature->alphaTargetY > WORLD_SCENE_HEIGHT) creature->alphaTargetY = WORLD_SCENE_HEIGHT - wanderDistance;
+        // Alphas get the same herd color as their members, but with a black ring
+        creature->color = generateHerdColor(creature->uniqueID); // Same color as herd
     } else {
         creature->state = STATE_SEEKING_HERD;
         // Herd members get a bright random color (will be overridden when assigned to alpha)
         creature->color = getRandomBrightColor();
     }
 
-    creature->exists = true;
-    creature->uniqueID = getUniqueID();
-
-    // Create graphics
+    // Create graphics with ring indicator
     creature->graphicsItem = new QGraphicsEllipseItem(0, 0, creature->size, creature->size);
     creature->graphicsItem->setPos(x, y);
     creature->graphicsItem->setBrush(QBrush(creature->color));
-    creature->graphicsItem->setPen(QPen(Qt::transparent));
-    creature->graphicsItem->setZValue(10);
+
+    // Set ring color and Z-value based on alpha status
+    if (isAlpha) {
+        creature->graphicsItem->setPen(QPen(Qt::black, CREATURE_RING_WIDTH)); // Black ring for alphas
+        creature->graphicsItem->setZValue(20); // Alphas always on top
+    } else {
+        creature->graphicsItem->setPen(QPen(Qt::white, CREATURE_RING_WIDTH)); // White ring for regular creatures
+        creature->graphicsItem->setZValue(10); // Regular creatures below alphas
+    }
 
     mWorldScene->addItem(creature->graphicsItem);
 
@@ -761,6 +768,30 @@ SimpleCreature* MainWindow::createCreature(qreal x, qreal y, bool isAlpha) {
 
 void MainWindow::findHerdTarget(SimpleCreature* creature) {
     if (!creature || creature->hasHerdTarget || creature->isAlpha) return;
+
+    // If creature has no alpha, try to find one first
+    if (!creature->myAlpha) {
+        // Find nearest alpha to assign to this orphan
+        SimpleCreature* nearestAlpha = nullptr;
+        qreal nearestDistance = std::numeric_limits<qreal>::max();
+
+        for (auto* potential : mCreatures) {
+            if (potential && potential->isAlpha && potential->exists) {
+                qreal distance = distanceBetween(creature->posX, creature->posY, potential->posX, potential->posY);
+                if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    nearestAlpha = potential;
+                }
+            }
+        }
+
+        if (nearestAlpha) {
+            creature->myAlpha = nearestAlpha;
+            creature->color = generateHerdColor(nearestAlpha->uniqueID);
+            creature->graphicsItem->setBrush(QBrush(creature->color));
+            creature->graphicsItem->setPen(QPen(Qt::white, CREATURE_RING_WIDTH));
+        }
+    }
 
     // Find a random creature in the same herd (same alpha) to follow
     QVector<SimpleCreature*> sameHerdMembers;
@@ -777,6 +808,11 @@ void MainWindow::findHerdTarget(SimpleCreature* creature) {
     if (!sameHerdMembers.empty()) {
         int randomIndex = QRandomGenerator::global()->bounded(sameHerdMembers.size());
         creature->herdTarget = sameHerdMembers[randomIndex];
+        creature->hasHerdTarget = true;
+        creature->state = STATE_MOVING_TO_HERD;
+    } else if (creature->myAlpha) {
+        // No herd members found, but we have an alpha - follow the alpha directly
+        creature->herdTarget = creature->myAlpha;
         creature->hasHerdTarget = true;
         creature->state = STATE_MOVING_TO_HERD;
     }
@@ -803,8 +839,8 @@ void MainWindow::assignCreatureToNearestAlpha(SimpleCreature* creature, const QV
         creature->myAlpha = nearestAlpha;
         // Give this creature the same color as its alpha's herd
         creature->color = generateHerdColor(nearestAlpha->uniqueID);
-        // Keep the black ring for regular herd members
-        creature->graphicsItem->setPen(QPen(Qt::black, CREATURE_RING_WIDTH));
+        // Keep the white ring for regular herd members (as per your preference)
+        creature->graphicsItem->setPen(QPen(Qt::white, CREATURE_RING_WIDTH));
     }
 }
 
@@ -944,4 +980,79 @@ QColor MainWindow::generateHerdColor(int alphaID) {
 int MainWindow::getUniqueID() {
     static int nextID = 1;
     return nextID++;
+}
+
+// === Housekeeping Methods ===
+void MainWindow::runHousekeeping() {
+    if (mCreatures.empty()) return;
+
+    appendOutput(QString("=== HOUSEKEEPING: Processing creatures starting at index %1 ===").arg(mHousekeepingCreatureIndex));
+
+    int orphansFound = 0;
+    int orphansRehomed = 0;
+
+    // Process a chunk of creatures
+    int processed = 0;
+
+    while (processed < MainWindow::HOUSEKEEPING_CREATURES_PER_INTERVAL && mHousekeepingCreatureIndex < mCreatures.size()) {
+        SimpleCreature* creature = mCreatures[mHousekeepingCreatureIndex];
+
+        if (creature && creature->exists && !creature->isAlpha) {
+            // Check if this creature is orphaned (no alpha assigned)
+            if (!creature->myAlpha) {
+                orphansFound++;
+
+                // Find a herd that's not full (has fewer than HERD_MAX_SIZE members)
+                QVector<SimpleCreature*> availableAlphas;
+
+                for (auto* alpha : mCreatures) {
+                    if (alpha && alpha->isAlpha && alpha->exists) {
+                        // Count current herd size for this alpha
+                        int herdSize = 0;
+                        for (auto* member : mCreatures) {
+                            if (member && member->exists && member->myAlpha == alpha) {
+                                herdSize++;
+                            }
+                        }
+
+                        if (herdSize < MainWindow::HERD_MAX_SIZE) {
+                            availableAlphas.push_back(alpha);
+                        }
+                    }
+                }
+
+                // Assign orphan to a random available alpha
+                if (!availableAlphas.empty()) {
+                    int randomIndex = QRandomGenerator::global()->bounded(availableAlphas.size());
+                    SimpleCreature* newAlpha = availableAlphas[randomIndex];
+
+                    // Assign to herd
+                    creature->myAlpha = newAlpha;
+                    creature->color = generateHerdColor(newAlpha->uniqueID);
+                    creature->graphicsItem->setBrush(QBrush(creature->color));
+                    // Keep the white ring for regular herd members (as per your preference)
+                    creature->graphicsItem->setPen(QPen(Qt::white, MainWindow::CREATURE_RING_WIDTH));
+
+                    // Reset creature state to start seeking herd members
+                    creature->state = STATE_SEEKING_HERD;
+                    creature->herdTarget = nullptr;
+                    creature->hasHerdTarget = false;
+
+                    orphansRehomed++;
+                }
+            }
+        }
+
+        mHousekeepingCreatureIndex++;
+        processed++;
+    }
+
+    // Reset index when we've processed all creatures
+    if (mHousekeepingCreatureIndex >= mCreatures.size()) {
+        mHousekeepingCreatureIndex = 0;
+    }
+
+    if (orphansFound > 0) {
+        appendOutput(QString("Housekeeping: Found %1 orphans, rehomed %2").arg(orphansFound).arg(orphansRehomed));
+    }
 }
