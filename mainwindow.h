@@ -102,15 +102,15 @@ public:
 
     // === Constants ===
     static const int VECTOR_SIZE = 1000000;
-    static const int USE_PCT_CORE = 80;
+    static const int USE_PCT_CORE = 95;  // Increased from 80 to 95
     static const int WORLD_SCENE_WIDTH = 100000;
     static const int WORLD_SCENE_HEIGHT = 56250;
     static const int NUM_TERRAIN_COLS = 100;
     static const int NUM_TERRAIN_ROWS = 56;
     static const int TERRAIN_SIZE = WORLD_SCENE_WIDTH / 100;
-    static const int STARTING_CREATURE_COUNT = 10000;
+    static const int STARTING_CREATURE_COUNT = 50000;  // Let's start high and see what happens!
     static const int DEFAULT_CREATURE_SIZE = 200;
-    static const int CREATURES_UPDATED_PER_TICK = 100;
+    static const int CREATURES_UPDATED_PER_TICK = 2000;  // More creatures per graphics update
 
 private slots:
     void runSimulation();

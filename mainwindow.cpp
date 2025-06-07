@@ -67,9 +67,9 @@ public:
             }
         }
 
-        // Simulate processing time based on core utilization (from 2dsim08)
+        // Simulate some processing time based on core utilization (from 2dsim08)
         if (MainWindow::USE_PCT_CORE < 100) {
-            int delayMs = (100 - MainWindow::USE_PCT_CORE) * 1;
+            int delayMs = (100 - MainWindow::USE_PCT_CORE) * 0.5;  // Reduced delay multiplier
             QThread::msleep(delayMs);
         }
 
@@ -347,10 +347,10 @@ void MainWindow::setupCreatures() {
 }
 
 void MainWindow::setupEventLoop() {
-    // Setup game loop timer (like 2dsim07)
+    // Setup event loop timer (like 2dsim07)
     connect(&mEventLoopTimer, &QTimer::timeout, this, &MainWindow::eventLoopTick);
-    mEventLoopTimer.setInterval(50); // 20 FPS
-    appendOutput("Event loop configured (50ms interval).");
+    mEventLoopTimer.setInterval(20); // Increased frequency: 50 FPS instead of 20 FPS
+    appendOutput("Event loop configured (20ms interval - 50 FPS).");
 }
 
 void MainWindow::runSimulation() {
