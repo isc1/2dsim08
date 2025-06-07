@@ -108,7 +108,7 @@ public:
     static const int NUM_TERRAIN_COLS = 100;
     static const int NUM_TERRAIN_ROWS = 56;
     static const int TERRAIN_SIZE = WORLD_SCENE_WIDTH / 100;
-    static const int STARTING_CREATURE_COUNT = 1000;
+    static const int STARTING_CREATURE_COUNT = 10000;
     static const int DEFAULT_CREATURE_SIZE = 200;
     static const int CREATURES_UPDATED_PER_TICK = 100;
 
