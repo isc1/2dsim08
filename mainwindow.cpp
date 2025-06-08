@@ -309,7 +309,7 @@ void CustomGraphicsView::resizeEvent(QResizeEvent *event) {
 // === MainWindow Implementation ===
 MainWindow::MainWindow(QWidget* parent)
     : QWidget(parent)
-    , mDebugOutputEnabled(true)
+    , mDebugOutputEnabled(false)
     , mSimulationRunning(false)
     , mCurrentCreatureIndex(0)
     , mMetronomeRotation(0)
@@ -432,9 +432,12 @@ void MainWindow::setupGraphics() {
         appendOutput("Metronome visual indicator created.");
     }
 
-    // Fit view to scene after a short delay
+    // Fit view to scene after a short delay - ZOOMED IN
     QTimer::singleShot(200, [this]() {
-        mWorldView->fitInView(mWorldScene->sceneRect(), Qt::KeepAspectRatio);
+        // Instead of fitting the entire world, zoom to show a reasonable section
+        // Show roughly a 10,000 x 5,625 section (1/10th of world size)
+        QRectF viewRect(0, 0, WORLD_SCENE_WIDTH / 1.5, WORLD_SCENE_HEIGHT / 1.5);
+        mWorldView->fitInView(viewRect, Qt::KeepAspectRatio);
     });
 }
 
@@ -939,7 +942,9 @@ int MainWindow::getUniqueID() {
 void MainWindow::runHousekeeping() {
     if (mCreatures.empty()) return;
 
-    appendOutput(QString("=== HOUSEKEEPING: Processing creatures starting at index %1 ===").arg(mHousekeepingCreatureIndex));
+    if (mDebugOutputEnabled) {
+        appendOutput(QString("=== HOUSEKEEPING: Processing creatures starting at index %1 ===").arg(mHousekeepingCreatureIndex));
+    }
 
     int orphansFound = 0;
     int orphansRehomed = 0;
