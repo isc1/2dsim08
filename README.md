@@ -200,3 +200,5 @@ It's less than 1,000 lines, so it's not big project, but it demonstrates some th
 So for anyone who hasn't tried to use these LMs to write code, or has tried and had difficulty, for example people who are just learning how to program, I thought I would include the conversation I had with Claude to get the code to the state is is in on 20250609.
 
 I'm going to put the discussion between Claude and I in here first, and then I _may_ put copies of the code buffers in here, or links to them, I'm not sure.  That would add a bunch of time to do by hand, and I don't believe Claude has a convo export capability yet.
+
+[TODO:  put the vibe coding conversation in here]
