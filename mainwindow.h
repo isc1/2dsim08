@@ -138,7 +138,9 @@ public:
     static const int NUM_TERRAIN_COLS = 100;
     static const int NUM_TERRAIN_ROWS = 56;
     static const int TERRAIN_SIZE = WORLD_SCENE_WIDTH / 100;
-    static const int STARTING_CREATURE_COUNT = 2000;  // Good number for multiple herds
+
+    // Creatures
+    static const int STARTING_CREATURE_COUNT = 3000;  // Good number for multiple herds
     static const int ALPHA_RATIO = 25;                // 1 alpha per 25 creatures (creates ~80 herds)
     static const int HERD_MIN_SIZE = 10;              // Minimum herd size before splitting
     static const int HERD_MAX_SIZE = 50;              // Maximum herd size before splitting
@@ -146,11 +148,9 @@ public:
     static const int DEFAULT_CREATURE_SIZE = 200;
     static const int CREATURES_UPDATED_PER_TICK = 1000;
     static const int CREATURE_RING_WIDTH = 40;        // Ring thickness (visible at normal zoom)
-
-    // Elbow room and behavior constants
     static constexpr qreal ELBOW_ROOM_FACTOR = 2.0;   // 0-10: 0=touching, 10=up to 10x diameter apart
-    static const int CREATURE_MIN_REST_TICKS = 100;   // Minimum ticks to rest in place
-    static const int CREATURE_MAX_REST_TICKS = 500;   // Maximum ticks to rest in place
+    static const int CREATURE_MIN_REST_TICKS = 10;   // Minimum ticks to rest in place
+    static const int CREATURE_MAX_REST_TICKS = 20;   // Maximum ticks to rest in place
     static const int CREATURE_MIN_WANDER_DISTANCE = 500;   // Min distance from alpha to wander
     static const int CREATURE_MAX_WANDER_DISTANCE = 2000;  // Max distance from alpha to wander
     static const int CREATURE_SPEED_SLOW = 40;
@@ -165,7 +165,6 @@ public:
     static const int ALPHA_SPEED_SLOW = 400;
     static const int ALPHA_SPEED_NORMAL = 800;
     static const int ALPHA_SPEED_BURST = 6000;
-    // Alpha wandering distance for normal daily movement
     static const int ALPHA_NORMAL_WANDER_DISTANCE = 2500;  // Creates a 50x50 box around alpha
 
 private slots:
