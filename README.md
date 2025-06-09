@@ -204,3 +204,5 @@ I'm going to put the discussion between Claude and I in here first, and then I _
 Oh yeah, there is a python program in here called src2file.py.  If you run this in the directory where your source files are located, it will create a file called consolidated_source.txt (or consolidated_source_n.txt if you want a file with line numbers, just pass in -n when you invoke it) which puts all the source in one file.  This makes pasting all the source into claude's prompt window easy.
 
 [TODO:  put the vibe coding conversation in here]
+
+<iframe width="560" height="315" src="https://www.youtube.com/embed/8LvuBvgIKyw?si=uJPd7JA9RzaAtnfF" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
