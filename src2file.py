@@ -4,8 +4,16 @@ import argparse
 import sys
 
 # ==============================================================================
-# Source Code Consolidator - Usage Instructions
+# Source Code Consolidator - Usage Instructions - by Claude Sonnet 4
 # ==============================================================================
+# This program will take a bunch of different source files and put them all into
+# one text file which is easy to paste into the prompt window of an LM so it can
+# see all the source files at once.  This definitely helps if you are not doing
+# agentic software development with these language models, and are still copy
+# /pasting like I am.  The AI can get confused or your code can get out of sync
+# and this program makes it easy to just show the AI what you have on disk.  This
+# has cleared up confusion with the AI for me many times, where we had started
+# talking in circles and having other problems.
 #
 # Basic usage:
 #   python source_consolidator.py /path/to/source/directory
