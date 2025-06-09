@@ -1,5 +1,5 @@
 # === README.md ===
-#2dsim08 - Alpha-Led Multi-Herd Simulation
+# 2dsim08 - Alpha-Led Multi-Herd Simulation
 
 A multithreaded creature simulation featuring alpha-led herding behavior. Watch as 80 alpha leaders (with black rings) guide their colorful herds around a vast world using emergent flocking behaviors.
 
