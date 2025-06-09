@@ -32,7 +32,7 @@ A multithreaded creature simulation featuring alpha-led herding behavior. Watch 
 1. Install Qt Creator and Qt 6.x from [qt.io](https://www.qt.io/download)
 2. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/2dsim08.git
+   git clone https://github.com/isc1/2dsim08.git
    cd 2dsim08
    ```
 3. Open Qt Creator
@@ -43,7 +43,7 @@ A multithreaded creature simulation featuring alpha-led herding behavior. Watch 
 
 ### Option 2: Command Line with qmake
 ```bash
-git clone https://github.com/yourusername/2dsim08.git
+git clone https://github.com/isc1/2dsim08.git
 cd 2dsim08
 
 # Generate Makefile
@@ -63,7 +63,7 @@ make
 
 ### Option 3: Command Line with CMake
 ```bash
-git clone https://github.com/yourusername/2dsim08.git
+git clone https://github.com/isc1/2dsim08.git
 cd 2dsim08
 mkdir build && cd build
 
@@ -125,17 +125,17 @@ static const int ALPHA_NORMAL_WANDER_DISTANCE = 2500; // Alpha movement range
 
 ## Troubleshooting
 
-###Build Issues
+### Build Issues
 - **Qt not found**: Ensure Qt is in your PATH or set `CMAKE_PREFIX_PATH`
 - **C++17 errors**: Update to GCC 9+, Clang 10+, or MSVC 2019+
 - **Missing widgets**: Install Qt Widgets module: `qt6-base-dev` (Linux)
 
-###Runtime Issues
+### Runtime Issues
 - **Slow performance**: Reduce `STARTING_CREATURE_COUNT` or disable debug output
 - **Threading errors**: Ensure Qt was built with threading support
 - **Graphics issues**: Update graphics drivers, try software rendering
 
-###Common Fixes
+### Common Fixes
 ```bash
 # Linux: Install Qt development packages
 sudo apt install qt6-base-dev qt6-tools-dev build-essential
@@ -146,7 +146,7 @@ brew install qt
 # Windows: Download Qt installer from qt.io
 ```
 
-##Development
+## Development
 
 This is an experimental simulation exploring emergent flocking behaviors and multithreaded game development patterns. The codebase demonstrates:
 
@@ -157,7 +157,7 @@ This is an experimental simulation exploring emergent flocking behaviors and mul
 
 This software, and the nice documentation for it in this README.md so far, was written by Claude Sonnet 4 in June of 2025.
 
-##License
+## License
 
 This is free and unencumbered software released into the public domain.
 
@@ -184,11 +184,11 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 For more information, please refer to <https://unlicense.org/>
 
-##Contributing
+## Contributing
 
 This project is not currently accepting contributions as I want to leave it like it is because it is a good starting point for lots of other little projects for me.
 
-##Development Discussion
+## Vibe Coding Proompting Discussion
 I've been playing around with little creature simulations in Qt for years.  Some of them would eat plants that spawned occasionally and die if they didn't get fed.  Some would chase each other around.  Generally, I found that Qt could do logic for about 500 creatures in the main thread before it would start to slow down and the creatures movements would start to become jerky.  If the logic was very simple, it could do 1000 or so.  I always wanted to do a multithreaded version so I could have more creatures but I'm lazy--and can come up with a bunch more excuses besides "lazy" if required--most having to do with character defects and attitude problems and so forth.
 
 So I never did it.  I fiddled around learning about Qt multithreading in an offhand way, but mutexes and critical sections are not as fun to work on as getting a dot-shaped cat to chase a bunch of dot-shaped mice.
