@@ -205,5 +205,6 @@ Oh yeah, there is a python program in here called src2file.py.  If you run this 
 
 [TODO:  put the vibe coding conversation in here]
 
-# ALL MY FRIENDS ARE DEAD
-# https://youtu.be/8LvuBvgIKyw
+![](Cats-SpringLake.jpg)
+# ALL MY FRIENDS ARE DEAD https://youtu.be/8LvuBvgIKyw
+
