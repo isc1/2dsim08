@@ -201,4 +201,6 @@ So for anyone who hasn't tried to use these LMs to write code, or has tried and 
 
 I'm going to put the discussion between Claude and I in here first, and then I _may_ put copies of the code buffers in here, or links to them, I'm not sure.  That would add a bunch of time to do by hand, and I don't believe Claude has a convo export capability yet.
 
+Oh yeah, there is a python program in here called src2file.py.  If you run this in the directory where your source files are located, it will create a file called consolidated_source.txt (or consolidated_source_n.txt if you want a file with line numbers, just pass in -n when you invoke it) which puts all the source in one file.  This makes pasting all the source into claude's prompt window easy.
+
 [TODO:  put the vibe coding conversation in here]
