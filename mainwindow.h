@@ -143,8 +143,8 @@ public:
     static const int STARTING_CREATURE_COUNT = 3000;  // Good number for multiple herds
     static const int ALPHA_RATIO = 25;                // 1 alpha per 25 creatures (creates ~80 herds)
     static const int HERD_MIN_SIZE = 10;              // Minimum herd size before splitting
-    static const int HERD_MAX_SIZE = 50;              // Maximum herd size before splitting
-    static const int HERD_GROUP_FOOTPRINT_SIZE = 1000;   // Distance followers can be from alpha
+    static const int HERD_MAX_SIZE = 500;              // Maximum herd size before splitting
+    static const int HERD_GROUP_FOOTPRINT_SIZE = 2000;   // Distance followers can be from alpha
     static const int DEFAULT_CREATURE_SIZE = 200;
     static const int CREATURES_UPDATED_PER_TICK = 1000;
     static const int CREATURE_RING_WIDTH = 40;        // Ring thickness (visible at normal zoom)
@@ -160,7 +160,7 @@ public:
     // Alpha behavior constants
     static const int ALPHA_MIN_WANDER_DIST = 3000;    // Min distance for alpha wandering spurts
     static const int ALPHA_MAX_WANDER_DIST = 8000;    // Max distance for alpha wandering spurts
-    static const int ALPHA_MIN_REST_DURATION = 20;   // Min ticks for alpha to rest (longer than creatures)
+    static const int ALPHA_MIN_REST_DURATION = 50;   // Min ticks for alpha to rest (longer than creatures)
     static const int ALPHA_MAX_REST_DURATION = 200;  // Max ticks for alpha to rest
     static const int ALPHA_SPEED_SLOW = 400;
     static const int ALPHA_SPEED_NORMAL = 800;
