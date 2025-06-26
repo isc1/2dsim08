@@ -140,9 +140,9 @@ public:
     static const int TERRAIN_SIZE = WORLD_SCENE_WIDTH / 100;
 
     // Creatures
-    static const int STARTING_CREATURE_COUNT = 3000;  // Good number for multiple herds
-    static const int ALPHA_RATIO = 25;                // 1 alpha per 25 creatures (creates ~80 herds)
-    static const int HERD_MIN_SIZE = 10;              // Minimum herd size before splitting
+    static const int STARTING_CREATURE_COUNT = 3001;  // 3000 seems to run okay
+    static const int ALPHA_RATIO = 25;                // 1 alpha per 25 creatures
+    static const int HERD_MIN_SIZE = 3;              // Minimum herd size before splitting
     static const int HERD_MAX_SIZE = 500;              // Maximum herd size before splitting
     static const int HERD_GROUP_FOOTPRINT_SIZE = 2000;   // Distance followers can be from alpha
     static const int DEFAULT_CREATURE_SIZE = 200;
@@ -150,7 +150,7 @@ public:
     static const int CREATURE_RING_WIDTH = 40;        // Ring thickness (visible at normal zoom)
     static constexpr qreal ELBOW_ROOM_FACTOR = 2.0;   // 0-10: 0=touching, 10=up to 10x diameter apart
     static const int CREATURE_MIN_REST_TICKS = 10;   // Minimum ticks to rest in place
-    static const int CREATURE_MAX_REST_TICKS = 20;   // Maximum ticks to rest in place
+    static const int CREATURE_MAX_REST_TICKS = 50;   // Maximum ticks to rest in place
     static const int CREATURE_MIN_WANDER_DISTANCE = 500;   // Min distance from alpha to wander
     static const int CREATURE_MAX_WANDER_DISTANCE = 2000;  // Max distance from alpha to wander
     static const int CREATURE_SPEED_SLOW = 40;
